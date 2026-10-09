@@ -1,0 +1,54 @@
+package com.boardinghousebot.config;
+
+import lombok.Getter;
+import lombok.Setter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+@Getter
+@Setter
+public class TelegramConfig {
+
+    private static final Logger log = LoggerFactory.getLogger(TelegramConfig.class);
+
+    @Value("${telegram.bot.username:}")
+    private String botUsername;
+
+    @Value("${telegram.bot.token:}")
+    private String botToken;
+
+    @Value("${telegram.admin-id:}")
+    private String adminId;
+
+    public String getBotUsername() {
+        return botUsername;
+    }
+
+    public void setBotUsername(String botUsername) {
+        this.botUsername = botUsername;
+    }
+
+    public String getBotToken() {
+        return botToken;
+    }
+
+    public void setBotToken(String botToken) {
+        this.botToken = botToken;
+    }
+
+    public String getAdminId() {
+        return adminId;
+    }
+
+    public void setAdminId(String adminId) {
+        this.adminId = adminId;
+    }
+
+    public void logConfigurationStatus() {
+        log.info("Telegram Bot Configured - Username: {}, Admin ID: {}, Token Provided: {}",
+                botUsername, adminId, (botToken != null && !botToken.isBlank()));
+    }
+}

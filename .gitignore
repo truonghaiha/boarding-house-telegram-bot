@@ -1,0 +1,41 @@
+# Build and output directories
+target/
+*.class
+*.jar
+*.war
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment and secrets
+.env
+
+# Logs
+*.log
+logs/
+
+# IDE and Editor files
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+bin/
+
+# Database temporary and backup files
+*.db-journal
+*.db-wal
+*.db-shm
+*.db.bak
+*.db.backup
+
+# Other environment files
+.env.*
+!.env.example
+
+# Local backup files
+*.bak
+*.backup

@@ -26,7 +26,7 @@ public class PaymentRecordedEvent extends ApplicationEvent {
     private final List<Long> recipientTelegramIds;
 
     public PaymentRecordedEvent(Payment payment) {
-        this(payment, Collections.emptyList());
+        this(payment, null);
     }
 
     public PaymentRecordedEvent(Payment payment, List<Long> recipientTelegramIds) {
@@ -55,8 +55,8 @@ public class PaymentRecordedEvent extends ApplicationEvent {
         }
         this.paymentAmount = payment != null ? payment.getAmount() : BigDecimal.ZERO;
 
-        if (recipientTelegramIds != null && !recipientTelegramIds.isEmpty()) {
-            this.recipientTelegramIds = recipientTelegramIds;
+        if (recipientTelegramIds != null) {
+            this.recipientTelegramIds = List.copyOf(recipientTelegramIds);
         } else if (this.room != null && this.room.getTenants() != null) {
             List<Long> ids = Collections.emptyList();
             try {

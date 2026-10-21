@@ -2,7 +2,8 @@ package com.boardinghousebot.domain.invoice;
 
 public enum PaymentMethod {
     CASH("Tiền mặt", "💵"),
-    BANK_TRANSFER("Chuyển khoản", "💳");
+    BANK_TRANSFER("Chuyển khoản", "💳"),
+    UNSPECIFIED("Không chỉ định", "💰");
 
     private final String displayName;
     private final String icon;

@@ -45,6 +45,8 @@ class TelegramNotificationFlowTest {
     @Autowired
     private NotificationService notificationService;
 
+    @Autowired private ContractService contracts;
+
     @Autowired
     private UserRepository userRepository;
 
@@ -143,6 +145,8 @@ class TelegramNotificationFlowTest {
     @DisplayName("4. Maintenance status PENDING -> IN_PROGRESS sends DB & Telegram notification to Member")
     void testMaintenanceStatusPendingToInProgressNotification() {
         roomService.assignMemberToRoom(LANDLORD_ID, MEMBER_ID, room101.getId());
+        contracts.createContract(LANDLORD_ID, MEMBER_ID, java.time.LocalDate.now(), java.time.LocalDate.now().plusMonths(6),
+                room101.getMonthlyRent(), BigDecimal.ZERO);
         MaintenanceRequest req = maintenanceService.createMaintenanceRequest(MEMBER_ID, "Hỏng điện", "Mất điện toàn phòng");
         reset(botMessageSender);
 
@@ -160,6 +164,8 @@ class TelegramNotificationFlowTest {
     @DisplayName("5. Maintenance status IN_PROGRESS -> RESOLVED sends DB & Telegram notification to Member")
     void testMaintenanceStatusResolvedNotification() {
         roomService.assignMemberToRoom(LANDLORD_ID, MEMBER_ID, room101.getId());
+        contracts.createContract(LANDLORD_ID, MEMBER_ID, java.time.LocalDate.now(), java.time.LocalDate.now().plusMonths(6),
+                room101.getMonthlyRent(), BigDecimal.ZERO);
         MaintenanceRequest req = maintenanceService.createMaintenanceRequest(MEMBER_ID, "Hỏng khóa", "Không khóa được cửa");
         maintenanceService.updateMaintenanceStatus(LANDLORD_ID, req.getId(), MaintenanceStatus.IN_PROGRESS, "Đang làm lại chìa");
         reset(botMessageSender);
@@ -170,7 +176,8 @@ class TelegramNotificationFlowTest {
         List<Notification> memberNotifications = notificationService.getNotificationsForUser(MEMBER_ID);
         assertFalse(memberNotifications.isEmpty());
 
-        verify(botMessageSender).sendMessage(eq(MEMBER_ID), contains("SỰ CỐ ĐÃ ĐƯỢC XỬ LÝ"));
+        verify(botMessageSender).sendMessage(eq(MEMBER_ID), argThat(text -> text.contains("SỰ CỐ ĐÃ ĐƯỢC XỬ LÝ")
+                && text.contains("Trạng thái:\nĐã xử lý") && !text.contains("RESOLVED")));
     }
 
     @Test
@@ -180,8 +187,7 @@ class TelegramNotificationFlowTest {
         assertNotNull(assigned.getRoom());
 
         List<Notification> memberNotifications = notificationService.getNotificationsForUser(MEMBER_ID);
-        assertFalse(memberNotifications.isEmpty());
-        assertEquals(NotificationType.ROOM_CHANGED, memberNotifications.get(0).getType());
+        assertTrue(memberNotifications.isEmpty());
 
         verify(botMessageSender).sendMessage(eq(MEMBER_ID), contains("BẠN ĐÃ ĐƯỢC THÊM VÀO PHÒNG"));
         verify(botMessageSender, never()).sendMessage(eq(LANDLORD_ID), anyString());
@@ -197,7 +203,7 @@ class TelegramNotificationFlowTest {
         assertNull(removed.getRoom());
 
         List<Notification> memberNotifications = notificationService.getNotificationsForUser(MEMBER_ID);
-        assertFalse(memberNotifications.isEmpty());
+        assertTrue(memberNotifications.isEmpty());
 
         verify(botMessageSender).sendMessage(eq(MEMBER_ID), contains("Bạn đã được xóa khỏi phòng 101"));
         verify(botMessageSender, never()).sendMessage(eq(LANDLORD_ID), anyString());
@@ -213,7 +219,7 @@ class TelegramNotificationFlowTest {
         assertEquals("102", moved.getRoom().getRoomNumber());
 
         List<Notification> memberNotifications = notificationService.getNotificationsForUser(MEMBER_ID);
-        assertFalse(memberNotifications.isEmpty());
+        assertTrue(memberNotifications.isEmpty());
 
         verify(botMessageSender).sendMessage(eq(MEMBER_ID), contains("Bạn đã được chuyển từ phòng 101"));
         verify(botMessageSender).sendMessage(eq(MEMBER_ID), contains("sang phòng 102"));
@@ -244,6 +250,6 @@ class TelegramNotificationFlowTest {
         assertEquals("101", assigned.getRoom().getRoomNumber());
 
         List<Notification> memberNotifications = notificationService.getNotificationsForUser(MEMBER_ID);
-        assertFalse(memberNotifications.isEmpty());
+        assertTrue(memberNotifications.isEmpty());
     }
 }

@@ -1,8 +1,8 @@
 package com.boardinghousebot.domain.maintenance;
 
 public enum MaintenanceStatus {
-    PENDING("Chờ xử lý", "⏳"),
-    IN_PROGRESS("Đang xử lý", "🔄"),
+    PENDING("Cần xử lý", "⏳"),
+    IN_PROGRESS("Cần xử lý", "⏳"), // Compatibility with existing records only.
     RESOLVED("Đã xử lý", "✅");
 
     private final String displayName;

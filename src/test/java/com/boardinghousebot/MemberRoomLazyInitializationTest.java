@@ -58,11 +58,15 @@ class MemberRoomLazyInitializationTest {
     @Autowired
     private AuditLogRepository auditLogRepository;
 
+    @Autowired
+    private RoomStayRepository roomStayRepository;
+
     private static final Long LANDLORD_ID = 888111L;
     private static final Long MEMBER_ID = 8167463325L;
 
     @BeforeEach
     void setUp() {
+        roomStayRepository.deleteAll();
         auditLogRepository.deleteAll();
         invoiceRepository.deleteAll();
         meterReadingRepository.deleteAll();
@@ -129,8 +133,8 @@ class MemberRoomLazyInitializationTest {
         userService.getOrCreateUser(MEMBER_ID, "member_real", "Member Real");
         roomService.assignMemberToRoom(LANDLORD_ID, MEMBER_ID, room.getId());
 
-        meterReadingService.createReading(LANDLORD_ID, room.getId(), UtilityType.ELECTRICITY, 9, 2026, new BigDecimal("100"), new BigDecimal("150"), new BigDecimal("3500"));
-        meterReadingService.createReading(LANDLORD_ID, room.getId(), UtilityType.WATER, 9, 2026, new BigDecimal("10"), new BigDecimal("20"), new BigDecimal("15000"));
+        meterReadingService.createReading(LANDLORD_ID, room.getId(), UtilityType.ELECTRICITY, LocalDate.now().getMonthValue(), LocalDate.now().getYear(), new BigDecimal("100"), new BigDecimal("150"), new BigDecimal("3500"));
+        meterReadingService.createReading(LANDLORD_ID, room.getId(), UtilityType.WATER, LocalDate.now().getMonthValue(), LocalDate.now().getYear(), new BigDecimal("10"), new BigDecimal("20"), new BigDecimal("15000"));
 
         List<MeterReading> readings = meterReadingService.getMemberRoomReadings(MEMBER_ID);
         assertEquals(2, readings.size());

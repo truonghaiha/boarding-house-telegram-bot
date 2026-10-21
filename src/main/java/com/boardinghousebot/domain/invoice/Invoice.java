@@ -10,14 +10,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "invoices",
-        uniqueConstraints = {
-                @UniqueConstraint(name = "uk_invoice_room_period", columnNames = {"room_id", "billing_month", "billing_year"})
-        },
-        indexes = {
-                @Index(name = "idx_invoice_room_period_unique", columnList = "room_id, billing_month, billing_year", unique = true)
-        }
-)
+@Table(name = "invoices", indexes=@Index(name="idx_invoice_cycle_unique", columnList="utility_cycle_id", unique=true))
 public class Invoice {
 
     @Id
@@ -35,6 +28,28 @@ public class Invoice {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "contract_id")
     private Contract contract;
+
+    @Column(name="utility_cycle_id", unique=true)
+    private Long utilityCycleId;
+    private LocalDate periodStart;
+    private LocalDate periodEnd;
+    private String note;
+    private LocalDate checkoutDate;
+    public String getNote() { return note; }
+    public void setNote(String note) { this.note = note; }
+    public LocalDate getCheckoutDate() { return checkoutDate; }
+    public void setCheckoutDate(LocalDate date) { checkoutDate = date; }
+    public Long getUtilityCycleId() { return utilityCycleId; }
+    public void setUtilityCycleId(Long id) { utilityCycleId = id; }
+    public LocalDate getPeriodStart() { return periodStart; }
+    public void setPeriodStart(LocalDate date) { periodStart = date; }
+    public LocalDate getPeriodEnd() { return periodEnd; }
+    public void setPeriodEnd(LocalDate date) { periodEnd = date; }
+    public String getPeriodDisplay() {
+        var f = java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        return periodStart == null || periodEnd == null ? String.format("%02d/%d", billingMonth, billingYear)
+                : periodStart.format(f) + " – " + periodEnd.format(f);
+    }
 
     @Column(name = "billing_month", nullable = false)
     private Integer billingMonth;
@@ -123,7 +138,7 @@ public class Invoice {
         if (totalAmount != null && paid.compareTo(totalAmount) >= 0) {
             return InvoiceStatus.PAID;
         }
-        if (dueDate != null && dueDate.isBefore(LocalDate.now())) {
+        if (dueDate != null && dueDate.isBefore(com.boardinghousebot.util.BillingDates.today())) {
             return InvoiceStatus.OVERDUE;
         }
         if (paid.compareTo(BigDecimal.ZERO) > 0) {

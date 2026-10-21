@@ -105,7 +105,7 @@ class InvoiceOverdueTest {
         member101.setRoom(room101);
         member101 = userRepository.save(member101);
 
-        contract101 = new Contract(member101, room101, LocalDate.now().minusMonths(6), LocalDate.now().plusMonths(6),
+        contract101 = new Contract(member101, room101, LocalDate.of(2026, 4, 18), LocalDate.of(2027, 4, 18),
                 new BigDecimal("3500000"), new BigDecimal("3500000"));
         contract101 = contractRepository.save(contract101);
 
@@ -173,10 +173,10 @@ class InvoiceOverdueTest {
     }
 
     @Test
-    @DisplayName("Test 6: Kiểm tra dueDate được lưu đúng ngày 15 của billing month/year")
-    void test6_DueDateIsFifteenth() {
+    @DisplayName("Test 6: Kiểm tra hạn thanh toán theo ngày bắt đầu hợp đồng")
+    void test6_DueDateFollowsContractStartDay() {
         Invoice invoice = invoiceService.createInvoice(landlord.getTelegramId(), room101.getId(), 9, 2026);
-        assertEquals(LocalDate.of(2026, 9, 15), invoice.getDueDate());
+        assertEquals(LocalDate.of(2026, 9, 18), invoice.getDueDate());
     }
 
     @Test
@@ -207,17 +207,17 @@ class InvoiceOverdueTest {
         
         // 2. Member view
         invoiceCommandHandler.handle(createCallbackUpdate("MEMBER_INVOICES"), member101, mockSender);
-        assertTrue(capturedMessages.stream().anyMatch(msg -> msg.contains("Hạn thanh toán: 15/08/2026")));
+        assertTrue(capturedMessages.stream().anyMatch(msg -> msg.contains("Hạn thanh toán: 18/08/2026")));
 
         // 3. Invoice list
         capturedMessages.clear();
-        invoiceCommandHandler.handle(createCallbackUpdate("INVOICE_LIST_LATEST"), landlord, mockSender);
-        assertTrue(capturedMessages.stream().anyMatch(msg -> msg.contains("Hạn: 15/08/2026")));
+        invoiceCommandHandler.handle(createCallbackUpdate("INVOICE_LIST_UNPAID"), landlord, mockSender);
+        assertTrue(capturedMessages.stream().anyMatch(msg -> msg.contains("HÓA ĐƠN CHƯA THANH TOÁN")));
 
         // 4. Detail view
         capturedMessages.clear();
         invoiceCommandHandler.handle(createCallbackUpdate("INVOICE_DETAIL_" + invoice.getId()), landlord, mockSender);
-        assertTrue(capturedMessages.stream().anyMatch(msg -> msg.contains("Hạn thanh toán: 15/08/2026")));
+        assertTrue(capturedMessages.stream().anyMatch(msg -> msg.contains("Hạn thanh toán: 18/08/2026")));
     }
 
     @Test

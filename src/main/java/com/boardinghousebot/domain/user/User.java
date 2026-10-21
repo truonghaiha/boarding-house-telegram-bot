@@ -21,6 +21,15 @@ public class User {
     @Column(name = "full_name")
     private String fullName;
 
+    @Column(name = "phone_number", length = 20)
+    private String phoneNumber;
+
+    public String getPhoneNumber() { return phoneNumber; }
+    public void setPhoneNumber(String phoneNumber) { this.phoneNumber = phoneNumber; }
+    public String getPhoneNumberDisplay() {
+        return phoneNumber == null || phoneNumber.isBlank() ? "Chưa cập nhật" : phoneNumber;
+    }
+
     @Enumerated(EnumType.STRING)
     @Column(name = "role", nullable = false)
     private Role role;

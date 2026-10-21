@@ -19,7 +19,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -36,11 +35,12 @@ public class InvoiceService {
     private final UserRepository userRepository;
     private final ContractRepository contractRepository;
     private final MeterReadingRepository meterReadingRepository;
+    private final RoomStayService roomStayService;
     private final AuthorizationService authorizationService;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
 
-    public InvoiceService(InvoiceRepository invoiceRepository,
+    public InvoiceService(RoomStayService roomStayService, InvoiceRepository invoiceRepository,
                           RoomRepository roomRepository,
                           UserRepository userRepository,
                           ContractRepository contractRepository,
@@ -53,9 +53,17 @@ public class InvoiceService {
         this.userRepository = userRepository;
         this.contractRepository = contractRepository;
         this.meterReadingRepository = meterReadingRepository;
+        this.roomStayService = roomStayService;
         this.authorizationService = authorizationService;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
+    }
+
+    @Transactional(readOnly=true)
+    public LocalDate previewDueDate(Long roomId,Integer month,Integer year) {
+        var c=contractRepository.findActiveContractByRoomId(roomId)
+                .orElseThrow(() -> new BusinessException("Phòng chưa có hợp đồng đang hiệu lực."));
+        return com.boardinghousebot.util.BillingDates.due(c.getStartDate(),month,year);
     }
 
     @Transactional
@@ -81,6 +89,8 @@ public class InvoiceService {
 
         Contract contract = contractRepository.findActiveContractByRoomId(roomId)
                 .orElseThrow(() -> new BusinessException(String.format("Phòng %s hiện không có hợp đồng đang hiệu lực.", room.getRoomNumber())));
+        if(invoiceRepository.findByContractId(contract.getId()).stream().anyMatch(i -> i.getCheckoutDate()!=null))
+            throw new BusinessException("Đã chốt trả phòng, đang chờ thanh toán hóa đơn cuối cùng. Không thể tạo thêm hóa đơn.");
 
         MeterReading electricity = meterReadingRepository.findByRoomIdAndUtilityTypeAndBillingMonthAndBillingYear(
                 roomId, UtilityType.ELECTRICITY, billingMonth, billingYear)
@@ -97,8 +107,7 @@ public class InvoiceService {
         BigDecimal waterAmount = water.getTotalCharge();
         BigDecimal total = roomRent.add(electricityAmount).add(waterAmount);
 
-        int maxDay = YearMonth.of(billingYear, billingMonth).lengthOfMonth();
-        LocalDate dueDate = LocalDate.of(billingYear, billingMonth, Math.min(15, maxDay));
+        LocalDate dueDate = com.boardinghousebot.util.BillingDates.due(contract.getStartDate(),billingMonth,billingYear);
 
         Invoice invoice = new Invoice(room, contract.getMember(), contract, billingMonth, billingYear,
                 roomRent, electricityAmount, waterAmount, total, dueDate);
@@ -128,6 +137,21 @@ public class InvoiceService {
             invoiceRepository.save(invoice);
         }
         return invoice;
+    }
+
+    @Transactional
+    public Invoice getInvoiceForUser(User viewer, Long invoiceId) {
+        Invoice invoice = invoiceRepository.findByIdWithDetails(invoiceId)
+                .orElseThrow(() -> new BusinessException("Không tìm thấy hóa đơn."));
+        if (viewer.getRole() != Role.LANDLORD) {
+            authorizationService.requireMember(viewer);
+            if (!canReadInvoice(viewer, invoice)) throw new BusinessException("Bạn không có quyền xem hóa đơn này.");
+        }
+        return getInvoiceById(invoiceId);
+    }
+
+    private boolean canReadInvoice(User viewer, Invoice invoice) {
+        return roomStayService.canReadInvoice(viewer, invoice);
     }
 
     @Transactional
@@ -196,15 +220,10 @@ public class InvoiceService {
         User member = userRepository.findByTelegramIdWithRoom(memberTelegramId)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy thông tin người dùng."));
 
-        if (member.getRole() != Role.MEMBER && member.getRole() != Role.LANDLORD && member.getRole() != Role.ADMIN) {
-            throw new BusinessException("Bạn không có quyền truy cập chức năng này.");
-        }
+        authorizationService.requireMember(member);
 
-        if (member.getRoom() == null) {
-            return List.of();
-        }
-
-        List<Invoice> invoices = invoiceRepository.findByRoomIdWithDetails(member.getRoom().getId());
+        List<Invoice> invoices = invoiceRepository.findAllWithDetails().stream()
+                .filter(invoice -> canReadInvoice(member, invoice)).toList();
         for (Invoice inv : invoices) {
             InvoiceStatus oldStatus = inv.getStatus();
             InvoiceStatus newStatus = inv.calculateCurrentStatus();

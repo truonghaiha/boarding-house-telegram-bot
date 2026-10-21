@@ -61,12 +61,14 @@ class SchedulerTest {
     @BeforeEach
     void setUp() {
         telegramNotificationService = new TelegramNotificationService(botMessageSender);
-        notificationService = new NotificationService(notificationRepository, userRepository);
+        notificationService = new NotificationService(notificationRepository, userRepository, contractRepository);
         invoiceReminderScheduler = new InvoiceReminderScheduler(invoiceRepository, notificationService, telegramNotificationService);
         contractReminderScheduler = new ContractReminderScheduler(contractRepository, notificationService, telegramNotificationService);
 
         member = new User(100L, "member1", "Nguyen Van A", Role.MEMBER);
         room = new Room("101", new BigDecimal("3000000"), 2, "Standard");
+        room.setId(1L); member.setRoom(room);
+        lenient().when(contractRepository.existsByRoomIdAndStatus(1L, com.boardinghousebot.domain.contract.ContractStatus.ACTIVE)).thenReturn(true);
         contract = new Contract(member, room, LocalDate.now(), LocalDate.now().plusDays(7), new BigDecimal("3000000"), new BigDecimal("3000000"));
     }
 

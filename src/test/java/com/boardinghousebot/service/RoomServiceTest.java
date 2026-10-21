@@ -44,6 +44,12 @@ class RoomServiceTest {
     @Autowired
     private TelegramConfig telegramConfig;
 
+    @Autowired
+    private jakarta.persistence.EntityManager entityManager;
+
+    @Autowired
+    private ContractService contractService;
+
     private User landlord;
     private User admin;
     private User member1;
@@ -193,7 +199,7 @@ class RoomServiceTest {
 
         BusinessException ex = assertThrows(BusinessException.class, () ->
                 roomService.assignMemberToRoom(landlord.getTelegramId(), member1.getTelegramId(), room2.getId()));
-        assertTrue(ex.getMessage().contains("đã được xếp vào phòng 101"));
+        assertEquals("Người này đã thuê phòng, không thể thêm vào phòng mới.", ex.getMessage());
     }
 
     @Test
@@ -219,6 +225,122 @@ class RoomServiceTest {
         Room updatedRoom = roomService.getRoomById(room.getId());
         assertEquals(RoomStatus.AVAILABLE, updatedRoom.getStatus());
         assertEquals(0, roomService.getCurrentOccupantCount(updatedRoom));
+    }
+
+    @Test
+    void removalFromRoomDetailRejectsResidentWhoMovedToAnotherRoom() {
+        Room firstRoom = roomService.createRoom(LANDLORD_ID, "301", new BigDecimal("3500000"), 2, "");
+        Room nextRoom = roomService.createRoom(LANDLORD_ID, "302", new BigDecimal("3500000"), 2, "");
+        roomService.assignMemberToRoom(LANDLORD_ID, MEMBER1_ID, firstRoom.getId());
+        roomService.moveMemberToRoom(LANDLORD_ID, MEMBER1_ID, nextRoom.getId());
+        assertThrows(BusinessException.class, () ->
+                roomService.removeMemberFromRoom(LANDLORD_ID, MEMBER1_ID, firstRoom.getId()));
+        assertEquals(nextRoom.getId(), roomService.getMemberRoom(MEMBER1_ID).orElseThrow().getId());
+        roomService.removeMemberFromRoom(LANDLORD_ID, MEMBER1_ID, nextRoom.getId());
+        assertTrue(roomService.getMemberRoom(MEMBER1_ID).isEmpty());
+        assertEquals(RoomStatus.AVAILABLE, roomService.getRoomById(nextRoom.getId()).getStatus());
+    }
+
+    @Test
+    void roomManagementCountsAndFiltersFollowSqliteChanges() {
+        var states = new com.boardinghousebot.state.ConversationStateService();
+        var handler = new com.boardinghousebot.bot.handler.RoomCommandHandler(roomService, states);
+        final String[] text = new String[1];
+        var sender = new com.boardinghousebot.bot.command.BotMessageSender() {
+            public void sendMessage(Long chatId, String message) {}
+            public void sendMessageWithKeyboard(Long chatId, String message,
+                    org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup keyboard) {
+                text[0] = message;
+            }
+        };
+        var actor = userRepository.findByTelegramId(LANDLORD_ID).orElseThrow();
+        java.util.function.Consumer<String> open = action -> {
+            var message = new org.telegram.telegrambots.meta.api.objects.message.Message();
+            message.setChat(new org.telegram.telegrambots.meta.api.objects.chat.Chat(LANDLORD_ID, "private"));
+            var query = new org.telegram.telegrambots.meta.api.objects.CallbackQuery();
+            query.setMessage(message);
+            query.setData(action);
+            var update = new org.telegram.telegrambots.meta.api.objects.Update();
+            update.setCallbackQuery(query);
+            handler.handle(update, actor, sender);
+        };
+        open.accept("LANDLORD_ROOMS");
+        assertTrue(text[0].contains("Tổng số phòng: 0"));
+        Room first = roomService.createRoom(LANDLORD_ID, "101", new BigDecimal("4000000"), 2, "");
+        Room upstairs = roomService.createRoom(LANDLORD_ID, "201", new BigDecimal("4000000"), 2, "");
+        roomService.assignMemberToRoom(LANDLORD_ID, MEMBER1_ID, first.getId());
+        open.accept("ROOM_FLOOR_1_0_AVAILABLE");
+        assertTrue(text[0].contains("Phòng 101 · 🟢 Còn chỗ"));
+        roomService.assignMemberToRoom(LANDLORD_ID, MEMBER2_ID, first.getId());
+        open.accept("LANDLORD_ROOMS");
+        assertTrue(text[0].contains("Tổng số phòng: 2"));
+        assertTrue(text[0].contains("Tổng số tầng: 2"));
+        assertTrue(text[0].contains("Phòng còn chỗ: 1"));
+        assertTrue(text[0].contains("Phòng đã đầy: 1"));
+        open.accept("ROOM_FLOOR_1_0_AVAILABLE");
+        assertTrue(text[0].contains("Không có phòng phù hợp"));
+        open.accept("ROOM_FLOOR_1_0_FULL");
+        assertTrue(text[0].contains("Phòng 101 · 🔴 Đã đầy"));
+        roomService.removeMemberFromRoom(LANDLORD_ID, MEMBER2_ID);
+        open.accept("ROOM_LIST_ALL");
+        assertTrue(text[0].contains("Tầng 1: 1 phòng · 🟢 1 còn chỗ"));
+        roomService.moveMemberToRoom(LANDLORD_ID, MEMBER1_ID, upstairs.getId());
+        open.accept("ROOM_FLOOR_1_0_ALL");
+        assertTrue(text[0].contains("Phòng 101 · ⚪ Trống"));
+        roomService.deleteRoom(LANDLORD_ID, first.getId());
+        open.accept("LANDLORD_ROOMS");
+        assertTrue(text[0].contains("Tổng số phòng: 1"));
+        assertTrue(text[0].contains("Tổng số tầng: 1"));
+        open.accept("ROOM_LIST_ALL");
+        assertFalse(text[0].contains("Tầng 1:"));
+        assertTrue(text[0].contains("Tầng 2:"));
+    }
+
+    @Test
+    void tenantPhonePersistsAndTelegramProfileRefreshKeepsIt() {
+        Room room = roomService.createRoom(LANDLORD_ID, "401", new BigDecimal("4000000"), 2, "");
+        roomService.assignMemberToRoom(LANDLORD_ID, MEMBER1_ID, room.getId(), "0912 345 678");
+        entityManager.flush(); entityManager.clear();
+        assertEquals("0912345678", userRepository.findByTelegramId(MEMBER1_ID).orElseThrow().getPhoneNumber());
+        userService.updateTenantPhoneNumber(LANDLORD_ID, MEMBER1_ID, "+84 912 345 679");
+        entityManager.flush(); entityManager.clear();
+        User refreshed = userService.getOrCreateUser(MEMBER1_ID, "changed", "New Telegram name");
+        assertEquals("+84912345679", refreshed.getPhoneNumber());
+        roomService.removeMemberFromRoom(LANDLORD_ID, MEMBER1_ID);
+        assertEquals("+84912345679", userRepository.findByTelegramId(MEMBER1_ID).orElseThrow().getPhoneNumber());
+    }
+
+    @Test
+    void editingRoomFieldsPreservesOccupancyAndContractRent() {
+        Room room = roomService.createRoom(LANDLORD_ID, "501", new BigDecimal("4000000"), 2, "Cũ");
+        roomService.assignMemberToRoom(LANDLORD_ID, MEMBER1_ID, room.getId());
+        var lease = contractService.createContract(LANDLORD_ID, MEMBER1_ID, java.time.LocalDate.now(),
+                java.time.LocalDate.now().plusYears(1), new BigDecimal("4000000"), BigDecimal.ZERO);
+        roomService.updateRoomRent(LANDLORD_ID, room.getId(), new BigDecimal("5000000"));
+        roomService.updateRoomDescription(LANDLORD_ID, room.getId(), "Mới");
+        entityManager.flush(); entityManager.clear();
+        Room updated = roomService.getRoomById(room.getId());
+        assertEquals(0, new BigDecimal("5000000").compareTo(updated.getMonthlyRent()));
+        assertEquals("Mới", updated.getDescription());
+        assertEquals(2, updated.getMaxOccupants());
+        assertEquals(1, roomService.getCurrentOccupantCount(updated));
+        assertEquals(0, new BigDecimal("4000000").compareTo(contractService.getContractById(lease.getId()).getMonthlyRent()));
+        assertThrows(BusinessException.class, () -> roomService.updateRoomRent(MEMBER1_ID, updated.getId(), BigDecimal.ONE));
+        assertThrows(BusinessException.class, () -> roomService.updateRoomDescription(ADMIN_ID, updated.getId(), "Denied"));
+    }
+
+    @Test
+    void tenantContactRejectsMissingPhoneAndUnauthorizedChanges() {
+        Room room = roomService.createRoom(LANDLORD_ID, "402", new BigDecimal("4000000"), 2, "");
+        for (String phone : new String[] {null, "", "abc", "123", "/skip"}) {
+            assertThrows(BusinessException.class, () -> roomService.assignMemberToRoom(LANDLORD_ID, MEMBER1_ID, room.getId(), phone));
+        }
+        assertTrue(roomService.getMemberRoom(MEMBER1_ID).isEmpty());
+        roomService.assignMemberToRoom(LANDLORD_ID, MEMBER1_ID, room.getId(), "0912345678");
+        assertThrows(BusinessException.class, () -> userService.updateTenantPhoneNumber(MEMBER2_ID, MEMBER1_ID, "0987654321"));
+        assertThrows(BusinessException.class, () -> userService.updateTenantPhoneNumber(ADMIN_ID, MEMBER1_ID, "0987654321"));
+        assertThrows(BusinessException.class, () -> userService.updateTenantPhoneNumber(LANDLORD_ID, MEMBER1_ID, ""));
+        assertEquals("0912345678", userRepository.findByTelegramId(MEMBER1_ID).orElseThrow().getPhoneNumber());
     }
 
     @Test

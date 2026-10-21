@@ -89,7 +89,7 @@ public class MemberRoomDisplayRegressionTest {
         roomCommandHandler.handle(update, member1, mockMessageSender);
 
         ArgumentCaptor<String> textCaptor = ArgumentCaptor.forClass(String.class);
-        verify(mockMessageSender).sendMessage(eq(MEMBER1_ID), textCaptor.capture());
+        verify(mockMessageSender).sendMessageWithKeyboard(eq(MEMBER1_ID), textCaptor.capture(), org.mockito.ArgumentMatchers.any());
 
         String messageText = textCaptor.getValue();
         assertNotNull(messageText);
@@ -102,6 +102,8 @@ public class MemberRoomDisplayRegressionTest {
 
         // Must NOT list member1 (Nguyen Van Member A) under co-tenants
         assertFalse(messageText.contains("- Nguyen Van Member A"));
+        assertFalse(messageText.contains("Mô tả phòng"));
+        assertFalse(messageText.contains("Phong 101 test"));
     }
 
     @Test
@@ -117,7 +119,7 @@ public class MemberRoomDisplayRegressionTest {
         roomCommandHandler.handle(update, member1, mockMessageSender);
 
         ArgumentCaptor<String> textCaptor = ArgumentCaptor.forClass(String.class);
-        verify(mockMessageSender).sendMessage(eq(MEMBER1_ID), textCaptor.capture());
+        verify(mockMessageSender).sendMessageWithKeyboard(eq(MEMBER1_ID), textCaptor.capture(), org.mockito.ArgumentMatchers.any());
 
         String messageText = textCaptor.getValue();
         assertNotNull(messageText);
@@ -130,6 +132,8 @@ public class MemberRoomDisplayRegressionTest {
 
         // Must NOT list member1 (Nguyen Van Member A) under co-tenants
         assertFalse(messageText.contains("- Nguyen Van Member A"));
+        assertFalse(messageText.contains("Mô tả phòng"));
+        assertFalse(messageText.contains("Phong 101 test"));
     }
 
     private Update createCallbackUpdate(String callbackData, Long chatId) {

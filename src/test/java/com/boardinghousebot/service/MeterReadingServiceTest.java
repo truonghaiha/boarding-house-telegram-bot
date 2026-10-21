@@ -27,6 +27,8 @@ import static org.junit.jupiter.api.Assertions.*;
 @SpringBootTest
 @Transactional
 class MeterReadingServiceTest {
+    @Autowired
+    private RoomStayService roomStayService;
 
     @Autowired
     private MeterReadingService meterReadingService;
@@ -46,6 +48,9 @@ class MeterReadingServiceTest {
     @Autowired
     private com.boardinghousebot.repository.ContractRepository contractRepository;
 
+    @Autowired private com.boardinghousebot.repository.InvoiceRepository invoices;
+    @Autowired private com.boardinghousebot.repository.PaymentRepository payments;
+
     private User landlord;
     private User member103;
     private User member102;
@@ -54,6 +59,8 @@ class MeterReadingServiceTest {
 
     @BeforeEach
     void setUp() {
+        payments.deleteAll();
+        invoices.deleteAll();
         auditLogRepository.deleteAll();
         contractRepository.deleteAll();
         meterReadingRepository.deleteAll();
@@ -82,6 +89,9 @@ class MeterReadingServiceTest {
         member102 = new User(100002L, "member102", "Member 102", Role.MEMBER);
         member102.setRoom(room102);
         member102 = userRepository.save(member102);
+        // This fixture represents occupancy starting before the fixed billing periods.
+        roomStayService.enter(member103, room103, java.time.LocalDateTime.of(2026, 1, 1, 0, 0));
+        roomStayService.enter(member102, room102, java.time.LocalDateTime.of(2026, 1, 1, 0, 0));
     }
 
     @Test
@@ -102,7 +112,7 @@ class MeterReadingServiceTest {
         assertEquals(UtilityType.ELECTRICITY, reading.getUtilityType());
         assertEquals(new BigDecimal("150"), reading.getConsumption());
         assertEquals(new BigDecimal("525000"), reading.getTotalCharge());
-        
+
         List<AuditLog> logs = auditLogRepository.findAll();
         assertFalse(logs.isEmpty());
         assertTrue(logs.stream().anyMatch(l -> l.getAction().contains("METER_READING")));

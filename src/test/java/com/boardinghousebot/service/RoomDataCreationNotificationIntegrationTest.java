@@ -1,4 +1,5 @@
 package com.boardinghousebot.service;
+import static org.mockito.ArgumentMatchers.argThat;
 
 import com.boardinghousebot.bot.command.BotMessageSender;
 import com.boardinghousebot.domain.contract.Contract;
@@ -148,13 +149,50 @@ public class RoomDataCreationNotificationIntegrationTest {
     }
 
     @Test
+    void contractEndedNotifiesRoomMembersWithPrivateDetailsOnlyForRepresentative() {
+        Contract contract = contractService.createContract(LANDLORD_A_ID, MEMBER_A_ID,
+                LocalDate.now(), LocalDate.now().plusMonths(6),
+                new BigDecimal("3000000"), new BigDecimal("1500000"));
+        notificationRepository.deleteAll();
+        org.mockito.Mockito.clearInvocations(botMessageSender);
+
+        contractService.endContract(LANDLORD_A_ID, contract.getId());
+
+        List<Notification> representative = notificationService.getNotificationsForUser(MEMBER_A_ID).stream()
+                .filter(n -> n.getType() == NotificationType.CONTRACT_ENDED).toList();
+        List<Notification> roommate = notificationService.getNotificationsForUser(MEMBER_B_ID).stream()
+                .filter(n -> n.getType() == NotificationType.CONTRACT_ENDED).toList();
+        assertTrue(representative.isEmpty());
+        assertTrue(roommate.isEmpty());
+        assertTrue(notificationService.getNotificationsForUser(MEMBER_A_ID).isEmpty());
+        assertTrue(notificationService.getNotificationsForUser(MEMBER_B_ID).isEmpty());
+        assertTrue(notificationService.getNotificationsForUser(MEMBER_C_ID).isEmpty());
+        assertTrue(notificationService.getNotificationsForUser(LANDLORD_A_ID).isEmpty());
+        assertTrue(notificationService.getNotificationsForUser(ADMIN_ID).isEmpty());
+        verify(botMessageSender).sendMessage(eq(MEMBER_A_ID), argThat(message ->
+                message.contains("HỢP ĐỒNG ĐÃ KẾT THÚC") && message.contains("Tiền cọc theo hợp đồng")));
+        verify(botMessageSender).sendMessage(eq(MEMBER_B_ID), argThat(message ->
+                message.contains("HỢP ĐỒNG ĐÃ KẾT THÚC") && !message.contains("Tiền cọc") && !message.contains("Tiền thuê")));
+        verify(botMessageSender, never()).sendMessage(eq(MEMBER_C_ID), contains("HỢP ĐỒNG ĐÃ KẾT THÚC"));
+
+        org.mockito.Mockito.clearInvocations(botMessageSender);
+        assertThrows(com.boardinghousebot.exception.BusinessException.class,
+                () -> contractService.endContract(LANDLORD_A_ID, contract.getId()));
+        assertEquals(0, notificationService.getNotificationsForUser(MEMBER_A_ID).stream()
+                .filter(n -> n.getType() == NotificationType.CONTRACT_ENDED).count());
+        org.mockito.Mockito.verifyNoInteractions(botMessageSender);
+    }
+
+    @Test
     @DisplayName("TEST 2: ELECTRICITY Created -> ALL Members in Room receive DB & Telegram notifications")
     void test2_ElectricityCreated_NotifiesAllRoomMembers() {
+        contractService.createContract(LANDLORD_A_ID, MEMBER_A_ID, LocalDate.now(), LocalDate.now().plusMonths(6),
+                room801.getMonthlyRent(), BigDecimal.ZERO);
         notificationRepository.deleteAll();
 
         MeterReading reading = meterReadingService.createReading(
                 LANDLORD_A_ID, room801.getId(), UtilityType.ELECTRICITY,
-                9, 2026, new BigDecimal("100"), new BigDecimal("250"), new BigDecimal("3500")
+                LocalDate.now().getMonthValue(), LocalDate.now().getYear(), new BigDecimal("100"), new BigDecimal("250"), new BigDecimal("3500")
         );
         assertNotNull(reading);
 
@@ -175,11 +213,13 @@ public class RoomDataCreationNotificationIntegrationTest {
     @Test
     @DisplayName("TEST 3: WATER Created -> ALL Members in Room receive DB & Telegram notifications")
     void test3_WaterCreated_NotifiesAllRoomMembers() {
+        contractService.createContract(LANDLORD_A_ID, MEMBER_A_ID, LocalDate.now(), LocalDate.now().plusMonths(6),
+                room801.getMonthlyRent(), BigDecimal.ZERO);
         notificationRepository.deleteAll();
 
         MeterReading reading = meterReadingService.createReading(
                 LANDLORD_A_ID, room801.getId(), UtilityType.WATER,
-                9, 2026, new BigDecimal("20"), new BigDecimal("30"), new BigDecimal("15000")
+                LocalDate.now().getMonthValue(), LocalDate.now().getYear(), new BigDecimal("20"), new BigDecimal("30"), new BigDecimal("15000")
         );
         assertNotNull(reading);
 
@@ -200,12 +240,12 @@ public class RoomDataCreationNotificationIntegrationTest {
     @DisplayName("TEST 4: INVOICE Created -> ALL Members in Room receive DB & Telegram notifications")
     void test4_InvoiceCreated_NotifiesAllRoomMembers() {
         contractService.createContract(LANDLORD_A_ID, MEMBER_A_ID, LocalDate.now(), LocalDate.now().plusMonths(6), new BigDecimal("3000000"), new BigDecimal("3000000"));
-        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.ELECTRICITY, 9, 2026, new BigDecimal("100"), new BigDecimal("200"), new BigDecimal("3500"));
-        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.WATER, 9, 2026, new BigDecimal("10"), new BigDecimal("20"), new BigDecimal("15000"));
+        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.ELECTRICITY, LocalDate.now().getMonthValue(), LocalDate.now().getYear(), new BigDecimal("100"), new BigDecimal("200"), new BigDecimal("3500"));
+        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.WATER, LocalDate.now().getMonthValue(), LocalDate.now().getYear(), new BigDecimal("10"), new BigDecimal("20"), new BigDecimal("15000"));
 
         notificationRepository.deleteAll();
 
-        Invoice invoice = invoiceService.createInvoice(LANDLORD_A_ID, room801.getId(), 9, 2026);
+        Invoice invoice = invoiceService.createInvoice(LANDLORD_A_ID, room801.getId(), LocalDate.now().getMonthValue(), LocalDate.now().getYear());
         assertNotNull(invoice);
 
         List<Notification> notifsA = notificationService.getNotificationsForUser(MEMBER_A_ID);
@@ -226,12 +266,12 @@ public class RoomDataCreationNotificationIntegrationTest {
     @DisplayName("TEST 5: ROOM ISOLATION: Creating Invoice for Room 801 does NOT notify Member C in Room 802")
     void test5_RoomIsolation_MembersInOtherRoomsNotNotified() {
         contractService.createContract(LANDLORD_A_ID, MEMBER_A_ID, LocalDate.now(), LocalDate.now().plusMonths(6), new BigDecimal("3000000"), new BigDecimal("3000000"));
-        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.ELECTRICITY, 9, 2026, new BigDecimal("100"), new BigDecimal("200"), new BigDecimal("3500"));
-        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.WATER, 9, 2026, new BigDecimal("10"), new BigDecimal("20"), new BigDecimal("15000"));
+        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.ELECTRICITY, LocalDate.now().getMonthValue(), LocalDate.now().getYear(), new BigDecimal("100"), new BigDecimal("200"), new BigDecimal("3500"));
+        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.WATER, LocalDate.now().getMonthValue(), LocalDate.now().getYear(), new BigDecimal("10"), new BigDecimal("20"), new BigDecimal("15000"));
 
         notificationRepository.deleteAll();
 
-        invoiceService.createInvoice(LANDLORD_A_ID, room801.getId(), 9, 2026);
+        invoiceService.createInvoice(LANDLORD_A_ID, room801.getId(), LocalDate.now().getMonthValue(), LocalDate.now().getYear());
 
         List<Notification> notifsC = notificationService.getNotificationsForUser(MEMBER_C_ID);
         assertTrue(notifsC.isEmpty(), "Member C in Room 802 must NOT receive invoice notification for Room 801");
@@ -242,12 +282,12 @@ public class RoomDataCreationNotificationIntegrationTest {
     @DisplayName("TEST 6: N-LANDLORD Model: Landlord A creates Invoice -> Members in room receive, Landlord B & ADMIN receive 0")
     void test6_NLandlordModel_RecipientsIsolated() {
         contractService.createContract(LANDLORD_A_ID, MEMBER_A_ID, LocalDate.now(), LocalDate.now().plusMonths(6), new BigDecimal("3000000"), new BigDecimal("3000000"));
-        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.ELECTRICITY, 9, 2026, new BigDecimal("100"), new BigDecimal("200"), new BigDecimal("3500"));
-        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.WATER, 9, 2026, new BigDecimal("10"), new BigDecimal("20"), new BigDecimal("15000"));
+        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.ELECTRICITY, LocalDate.now().getMonthValue(), LocalDate.now().getYear(), new BigDecimal("100"), new BigDecimal("200"), new BigDecimal("3500"));
+        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.WATER, LocalDate.now().getMonthValue(), LocalDate.now().getYear(), new BigDecimal("10"), new BigDecimal("20"), new BigDecimal("15000"));
 
         notificationRepository.deleteAll();
 
-        invoiceService.createInvoice(LANDLORD_A_ID, room801.getId(), 9, 2026);
+        invoiceService.createInvoice(LANDLORD_A_ID, room801.getId(), LocalDate.now().getMonthValue(), LocalDate.now().getYear());
 
         List<Notification> notifsLandlordB = notificationService.getNotificationsForUser(LANDLORD_B_ID);
         List<Notification> notifsAdmin = notificationService.getNotificationsForUser(ADMIN_ID);
@@ -260,12 +300,12 @@ public class RoomDataCreationNotificationIntegrationTest {
     @DisplayName("TEST 7: NO DUPLICATE: Single Invoice creation produces exactly 1 notification per room member")
     void test7_NoDuplicateNotification() {
         contractService.createContract(LANDLORD_A_ID, MEMBER_A_ID, LocalDate.now(), LocalDate.now().plusMonths(6), new BigDecimal("3000000"), new BigDecimal("3000000"));
-        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.ELECTRICITY, 9, 2026, new BigDecimal("100"), new BigDecimal("200"), new BigDecimal("3500"));
-        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.WATER, 9, 2026, new BigDecimal("10"), new BigDecimal("20"), new BigDecimal("15000"));
+        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.ELECTRICITY, LocalDate.now().getMonthValue(), LocalDate.now().getYear(), new BigDecimal("100"), new BigDecimal("200"), new BigDecimal("3500"));
+        meterReadingService.createReading(LANDLORD_A_ID, room801.getId(), UtilityType.WATER, LocalDate.now().getMonthValue(), LocalDate.now().getYear(), new BigDecimal("10"), new BigDecimal("20"), new BigDecimal("15000"));
 
         notificationRepository.deleteAll();
 
-        Invoice invoice = invoiceService.createInvoice(LANDLORD_A_ID, room801.getId(), 9, 2026);
+        Invoice invoice = invoiceService.createInvoice(LANDLORD_A_ID, room801.getId(), LocalDate.now().getMonthValue(), LocalDate.now().getYear());
 
         List<Notification> notifsA = notificationService.getNotificationsForUser(MEMBER_A_ID);
         List<Notification> notifsB = notificationService.getNotificationsForUser(MEMBER_B_ID);

@@ -60,6 +60,15 @@ public class TenantCommandHandler implements CommandHandler {
 
     @Override
     public void handle(Update update, User user, BotMessageSender messageSender) {
+        String action = update.hasMessage() ? update.getMessage().getText() : update.getCallbackQuery().getData();
+        Long actionChatId = update.hasMessage() ? update.getMessage().getChatId() : update.getCallbackQuery().getMessage().getChatId();
+        var actionStep = stateService.getState(user.getTelegramId()).getStep();
+        if (!com.boardinghousebot.bot.command.RoleActionPolicy.allows(user, getCommand(), action, actionStep, update.hasMessage())) {
+            stateService.clearState(user.getTelegramId());
+            messageSender.sendNotice(actionChatId, "❌ Bạn không có quyền thực hiện chức năng này.");
+            return;
+        }
+
         Long chatId = update.hasMessage() ? update.getMessage().getChatId() : update.getCallbackQuery().getMessage().getChatId();
         Long landlordTelegramId = user.getTelegramId();
 
@@ -68,13 +77,31 @@ public class TenantCommandHandler implements CommandHandler {
 
         UserConversationState state = stateService.getState(landlordTelegramId);
 
-        if ("/cancel".equalsIgnoreCase(text) || "CANCEL_MOVE_TENANT".equals(text)) {
+        if ("/cancel".equalsIgnoreCase(text) || "CANCEL_MOVE_TENANT".equals(text) || "TENANT_EDIT_CANCEL".equals(text)) {
+            boolean isAssign = state.getStep().name().startsWith("ASSIGN_TENANT");
             stateService.clearState(landlordTelegramId);
-            messageSender.sendMessageWithKeyboard(chatId, "❌ Đã hủy thao tác chuyển phòng.", TelegramKeyboardUtil.getLandlordTenantManagementMenu());
+            String cancelMessage = isAssign ? "❌ Đã hủy thao tác thêm người thuê vào phòng."
+                    : state.getStep().name().startsWith("EDIT_TENANT") ? "❌ Đã hủy thao tác sửa thông tin người thuê."
+                    : state.getStep().name().startsWith("MOVE_TENANT") ? "❌ Đã hủy thao tác chuyển phòng."
+                    : "❌ Đã hủy thao tác quản lý người thuê.";
+            messageSender.sendMessageWithKeyboard(chatId, cancelMessage, TelegramKeyboardUtil.getLandlordTenantManagementMenu());
             return;
         }
 
         if (update.hasMessage() && update.getMessage().hasText()) {
+            if (state.getStep() == Step.REMOVE_TENANT_INPUT) {
+                try { promptRemoveTenant(chatId, landlordTelegramId, Long.parseLong(text.trim()), messageSender); }
+                catch (NumberFormatException e) { messageSender.sendNotice(chatId, "❌ Telegram ID phải là một số nguyên hợp lệ. Vui lòng nhập lại."); }
+                return;
+            }
+            if (state.getStep() == Step.REMOVE_TENANT_CONFIRM || state.getStep() == Step.ASSIGN_TENANT_ROOM_SELECT) {
+                messageSender.sendNotice(chatId, "Vui lòng chọn bằng nút bên dưới hoặc Hủy.");
+                return;
+            }
+            if (state.getStep() == Step.ASSIGN_TENANT_PHONE || state.getStep().name().startsWith("EDIT_TENANT")) {
+                processTenantContactInput(chatId, text, landlordTelegramId, state, messageSender);
+                return;
+            }
             if (text.startsWith("/assign")) {
                 handleAssignCommand(chatId, text, landlordTelegramId, messageSender);
                 return;
@@ -104,6 +131,55 @@ public class TenantCommandHandler implements CommandHandler {
 
         if (update.hasCallbackQuery()) {
             String data = update.getCallbackQuery().getData();
+            if (data.startsWith("TENANT_ASSIGN_ROOM_")) {
+                if (state.getStep() != Step.ASSIGN_TENANT_ROOM_SELECT) {
+                    messageSender.sendNotice(chatId, "❌ Lựa chọn đã hết hiệu lực. Vui lòng bắt đầu lại."); return;
+                }
+                String[] ids = data.substring("TENANT_ASSIGN_ROOM_".length()).split("_");
+                try {
+                    if (ids.length != 2 || !Long.valueOf(ids[1]).equals(state.getTargetUserTelegramId()))
+                        throw new BusinessException("Lựa chọn đã hết hiệu lực. Vui lòng chọn lại.");
+                    startAssignPhone(chatId, landlordTelegramId, state.getTargetUserTelegramId(), Long.parseLong(ids[0]), messageSender);
+                } catch (NumberFormatException | BusinessException e) { messageSender.sendNotice(chatId, "❌ Lựa chọn phòng không hợp lệ hoặc phòng không còn chỗ. Vui lòng chọn lại."); }
+                return;
+            }
+            if (data.startsWith("TENANT_REMOVE_CONFIRM_")) {
+                String expected = "TENANT_REMOVE_CONFIRM_" + state.getTargetRoomId() + "_" + state.getTargetUserTelegramId();
+                if (state.getStep() != Step.REMOVE_TENANT_CONFIRM || !expected.equals(data)) {
+                    messageSender.sendNotice(chatId, "❌ Thao tác đã hết hiệu lực. Vui lòng bắt đầu lại."); return;
+                }
+                try {
+                    User removed = roomService.removeMemberFromRoom(landlordTelegramId, state.getTargetUserTelegramId(), state.getTargetRoomId());
+                    stateService.clearState(landlordTelegramId);
+                    messageSender.sendResultAndMenu(chatId, "✅ Đã xóa người thuê " + removed.getFullName() + " khỏi phòng.", TelegramKeyboardUtil.getLandlordTenantManagementMenu());
+                } catch (BusinessException e) {
+                    stateService.clearState(landlordTelegramId);
+                    messageSender.sendNotice(chatId, "❌ " + e.getMessage());
+                }
+                return;
+            }
+
+            if ("TENANT_EDIT_INPUT".equals(data)) {
+                stateService.setState(landlordTelegramId, new UserConversationState(Step.EDIT_TENANT_TELEGRAM_ID));
+                messageSender.sendPrompt(chatId, "✏️ SỬA THÔNG TIN NGƯỜI THUÊ\n\nNhập Telegram ID của người thuê cần sửa số điện thoại:");
+                return;
+            }
+            if ("TENANT_EDIT_CONFIRM".equals(data)) {
+                if (state.getStep() != Step.EDIT_TENANT_CONFIRM) {
+                    messageSender.sendNotice(chatId, "❌ Thao tác đã hết hiệu lực. Vui lòng bắt đầu sửa lại.");
+                    return;
+                }
+                try {
+                    User saved = userService.updateTenantPhoneNumber(landlordTelegramId, state.getTargetUserTelegramId(), (String) state.getData().get("phone"));
+                    stateService.clearState(landlordTelegramId);
+                    messageSender.sendNotice(chatId, "✅ Đã cập nhật số điện thoại của " + saved.getFullName() + ": " + saved.getPhoneNumberDisplay());
+                    listAllTenants(chatId, user, messageSender);
+                } catch (BusinessException e) {
+                    stateService.clearState(landlordTelegramId);
+                    messageSender.sendNotice(chatId, "❌ " + e.getMessage());
+                }
+                return;
+            }
 
             if ("LANDLORD_TENANTS".equals(data)) {
                 messageSender.sendMessageWithKeyboard(chatId, "👥 QUẢN LÝ NGƯỜI THUÊ\n\nVui lòng chọn thao tác bên dưới:", TelegramKeyboardUtil.getLandlordTenantManagementMenu());
@@ -114,11 +190,13 @@ public class TenantCommandHandler implements CommandHandler {
                 return;
             }
             if ("TENANT_ADD_INPUT".equals(data)) {
-                messageSender.sendMessage(chatId, "➕ THÊM NGƯỜI THUÊ VÀO PHÒNG\n\nVui lòng nhập lệnh dạng:\n`/assign <Telegram_ID> <Số_Phòng>`\n\nVí dụ: `/assign 8167463325 101`");
+                stateService.setState(landlordTelegramId, new UserConversationState(Step.ASSIGN_TENANT_TELEGRAM_ID));
+                messageSender.sendPrompt(chatId, "➕ THÊM NGƯỜI THUÊ\n\nNhập Telegram ID của người thuê cần thêm:");
                 return;
             }
             if ("TENANT_REMOVE_INPUT".equals(data)) {
-                messageSender.sendMessage(chatId, "➖ XÓA NGƯỜI THUÊ KHỎI PHÒNG\n\nVui lòng nhập lệnh dạng:\n`/remove_tenant <Telegram_ID>`\n\nVí dụ: `/remove_tenant 8167463325`");
+                stateService.setState(landlordTelegramId, new UserConversationState(Step.REMOVE_TENANT_INPUT));
+                messageSender.sendPrompt(chatId, "➖ XÓA NGƯỜI THUÊ KHỎI PHÒNG\n\nNhập Telegram ID của người thuê cần xóa:");
                 return;
             }
             if ("TENANT_MOVE_INPUT".equals(data)) {
@@ -139,20 +217,20 @@ public class TenantCommandHandler implements CommandHandler {
                 UserConversationState newState = new UserConversationState(Step.ASSIGN_TENANT_TELEGRAM_ID);
                 newState.setTargetRoomId(roomId);
                 stateService.setState(landlordTelegramId, newState);
-                messageSender.sendMessage(chatId, "➕ Nhập Telegram ID của người thuê (MEMBER) cần xếp vào phòng:\n\n*(Gõ /cancel để hủy)*");
+                messageSender.sendPrompt(chatId, "➕ Nhập Telegram ID của người thuê (MEMBER) cần xếp vào phòng:");
                 return;
             }
             if (data.startsWith("ROOM_MOVE_")) {
                 Long roomId = Long.parseLong(data.substring("ROOM_MOVE_".length()));
-                UserConversationState newState = new UserConversationState(Step.MOVE_TENANT_TARGET_ROOM);
-                newState.setTargetRoomId(roomId);
+                UserConversationState newState = new UserConversationState(Step.MOVE_TENANT_MEMBER_TELEGRAM_ID);
+                newState.getData().put("sourceRoomId", roomId);
                 stateService.setState(landlordTelegramId, newState);
-                messageSender.sendMessage(chatId, "🚚 ĐỂ CHUYỂN PHÒNG:\n\nVui lòng nhập lệnh dạng:\n`/move <Telegram_ID_Người_Thuê> <Số_Phòng_Đích>`\n\nVí dụ: `/move 8167463325 102`");
+                messageSender.sendPrompt(chatId, "🚚 CHUYỂN PHÒNG\n\nNhập Telegram ID của người thuê trong phòng này cần chuyển:");
                 return;
             }
             if (data.startsWith("REMOVE_TENANT_")) {
                 Long targetTelegramId = Long.parseLong(data.substring("REMOVE_TENANT_".length()));
-                removeTenant(chatId, landlordTelegramId, targetTelegramId, messageSender);
+                promptRemoveTenant(chatId, landlordTelegramId, targetTelegramId, messageSender);
                 return;
             }
             if (data.startsWith("ROOM_TENANTS_")) {
@@ -166,10 +244,10 @@ public class TenantCommandHandler implements CommandHandler {
     }
 
     private void startMoveTenantWizard(Long chatId, Long landlordTelegramId, UserConversationState state, BotMessageSender messageSender) {
-        state.setStep(Step.MOVE_TENANT_MEMBER_TELEGRAM_ID);
+        state = new UserConversationState(Step.MOVE_TENANT_MEMBER_TELEGRAM_ID);
         stateService.setState(landlordTelegramId, state);
 
-        messageSender.sendMessage(chatId, "🔄 CHUYỂN PHÒNG\n\nNhập Telegram ID của người thuê:\n\n/cancel");
+        messageSender.sendPrompt(chatId, "🔄 CHUYỂN PHÒNG\n\nNhập Telegram ID của người thuê:");
     }
 
     private void processMoveTenantMemberIdInput(Long chatId, String input, Long landlordTelegramId, UserConversationState state, BotMessageSender messageSender) {
@@ -194,6 +272,8 @@ public class TenantCommandHandler implements CommandHandler {
                 log.warn("MOVE_TENANT Step 3 Failed: User Telegram ID={} has no assigned room", targetTelegramId);
                 throw new BusinessException("Người dùng này hiện chưa thuộc phòng nào.");
             }
+            if (state.getData().get("sourceRoomId") != null && !currentRoom.getId().equals(state.getData().get("sourceRoomId")))
+                throw new BusinessException("Người thuê không thuộc phòng đã chọn. Vui lòng nhập lại ID.");
             log.info("MOVE_TENANT Step 3 Success: Current room ID={}, RoomNumber={}", currentRoom.getId(), currentRoom.getRoomNumber());
 
             log.info("MOVE_TENANT Step 4: Getting available target rooms (excluding current room ID={})", currentRoom.getId());
@@ -249,10 +329,10 @@ public class TenantCommandHandler implements CommandHandler {
 
         } catch (NumberFormatException e) {
             log.warn("MOVE_TENANT Error: Invalid Telegram ID format '{}'", input);
-            messageSender.sendMessage(chatId, "❌ Telegram ID phải là một số nguyên hợp lệ. Vui lòng nhập lại:");
+            messageSender.sendNotice(chatId, "❌ Telegram ID phải là một số nguyên hợp lệ. Vui lòng nhập lại:");
         } catch (BusinessException e) {
             log.warn("MOVE_TENANT BusinessException: {}", e.getMessage());
-            messageSender.sendMessage(chatId, "❌ " + e.getMessage());
+            messageSender.sendNotice(chatId, "❌ " + e.getMessage());
         } catch (Exception e) {
             log.error("MOVE_TENANT Unexpected Exception", e);
             messageSender.sendMessage(chatId, "❌ Đã xảy ra lỗi hệ thống: " + e.getMessage());
@@ -260,6 +340,9 @@ public class TenantCommandHandler implements CommandHandler {
     }
 
     private void handleTargetRoomSelectedForMove(Long chatId, Long landlordTelegramId, Long targetRoomId, UserConversationState state, BotMessageSender messageSender) {
+        if (state.getStep() != Step.MOVE_TENANT_TARGET_ROOM_SELECT) {
+            messageSender.sendNotice(chatId, "❌ Lựa chọn phòng đã hết hiệu lực. Vui lòng bắt đầu lại."); return;
+        }
         try {
             Room targetRoom = roomService.getRoomById(targetRoomId);
             String fullName = (String) state.getData().get("targetUserFullName");
@@ -298,11 +381,14 @@ public class TenantCommandHandler implements CommandHandler {
 
         } catch (BusinessException e) {
             stateService.clearState(landlordTelegramId);
-            messageSender.sendMessageWithKeyboard(chatId, "❌ " + e.getMessage(), TelegramKeyboardUtil.getLandlordTenantManagementMenu());
+            messageSender.sendNotice(chatId, "❌ " + e.getMessage());
         }
     }
 
     private void executeMoveTenant(Long chatId, Long landlordTelegramId, UserConversationState state, BotMessageSender messageSender) {
+        if (state.getStep() != Step.MOVE_TENANT_CONFIRM) {
+            messageSender.sendNotice(chatId, "❌ Thao tác đã hết hiệu lực. Vui lòng bắt đầu lại."); return;
+        }
         try {
             Long targetTelegramId = (Long) state.getData().get("targetUserTelegramId");
             Long targetRoomId = (Long) state.getData().get("targetRoomId");
@@ -310,10 +396,10 @@ public class TenantCommandHandler implements CommandHandler {
             User movedUser = roomService.moveMemberToRoom(landlordTelegramId, targetTelegramId, targetRoomId);
             stateService.clearState(landlordTelegramId);
 
-            messageSender.sendMessageWithKeyboard(chatId, "✅ Đã chuyển người thuê " + movedUser.getFullName() + " sang phòng " + movedUser.getRoom().getRoomNumber() + " thành công!", TelegramKeyboardUtil.getLandlordTenantManagementMenu());
+            messageSender.sendResultAndMenu(chatId, "✅ Đã chuyển người thuê " + movedUser.getFullName() + " sang phòng " + movedUser.getRoom().getRoomNumber() + " thành công!", TelegramKeyboardUtil.getLandlordTenantManagementMenu());
         } catch (BusinessException e) {
             stateService.clearState(landlordTelegramId);
-            messageSender.sendMessageWithKeyboard(chatId, "❌ " + e.getMessage(), TelegramKeyboardUtil.getLandlordTenantManagementMenu());
+            messageSender.sendNotice(chatId, "❌ " + e.getMessage());
         }
     }
 
@@ -321,7 +407,8 @@ public class TenantCommandHandler implements CommandHandler {
         try {
             String[] parts = text.split("\\s+");
             if (parts.length < 3) {
-                messageSender.sendMessage(chatId, "Cú pháp không đúng. Vui lòng nhập: `/assign <Telegram_ID> <Số_Phòng>`");
+                stateService.setState(landlordTelegramId, new UserConversationState(Step.ASSIGN_TENANT_TELEGRAM_ID));
+                messageSender.sendPrompt(chatId, "Nhập Telegram ID của người thuê cần thêm:");
                 return;
             }
             Long targetTelegramId = Long.parseLong(parts[1]);
@@ -330,12 +417,11 @@ public class TenantCommandHandler implements CommandHandler {
             Room room = roomService.getRoomByRoomNumber(roomNumber)
                     .orElseThrow(() -> new BusinessException("Không tìm thấy phòng " + roomNumber + "."));
 
-            User assignedUser = roomService.assignMemberToRoom(landlordTelegramId, targetTelegramId, room.getId());
-            messageSender.sendMessage(chatId, "✅ Đã xếp người thuê " + assignedUser.getFullName() + " (ID: " + targetTelegramId + ") vào phòng " + room.getRoomNumber() + " thành công!");
+            startAssignPhone(chatId, landlordTelegramId, targetTelegramId, room.getId(), messageSender);
         } catch (NumberFormatException e) {
-            messageSender.sendMessage(chatId, "Telegram ID phải là một số nguyên hợp lệ.");
+            messageSender.sendNotice(chatId, "Telegram ID phải là một số nguyên hợp lệ.");
         } catch (BusinessException e) {
-            messageSender.sendMessage(chatId, "❌ " + e.getMessage());
+            messageSender.sendNotice(chatId, "❌ " + e.getMessage());
         }
     }
 
@@ -343,15 +429,86 @@ public class TenantCommandHandler implements CommandHandler {
         try {
             Long targetTelegramId = Long.parseLong(input);
             Long roomId = state.getTargetRoomId();
-
-            User assignedUser = roomService.assignMemberToRoom(landlordTelegramId, targetTelegramId, roomId);
-            stateService.clearState(landlordTelegramId);
-
-            messageSender.sendMessage(chatId, "✅ Đã xếp người thuê " + assignedUser.getFullName() + " (ID: " + targetTelegramId + ") vào phòng thành công!");
+            if (roomId == null) {
+                User tenant = userService.findByTelegramIdWithRoom(targetTelegramId)
+                        .orElseThrow(() -> new BusinessException("Không tìm thấy người thuê. Vui lòng nhập lại ID."));
+                if (tenant.getRole() != Role.MEMBER)
+                    throw new BusinessException("Chỉ có thể thêm người dùng có vai trò MEMBER vào phòng. Vui lòng nhập lại ID.");
+                if (tenant.getRoom() != null)
+                    throw new BusinessException("Người này đã thuê phòng, không thể thêm vào phòng mới.");
+                List<Room> available = roomService.getAvailableRooms();
+                if (available.isEmpty()) { messageSender.sendNotice(chatId, "❌ Không có phòng còn chỗ. Bạn có thể hủy thao tác."); return; }
+                state.setTargetUserTelegramId(targetTelegramId);
+                state.setStep(Step.ASSIGN_TENANT_ROOM_SELECT);
+                stateService.setState(landlordTelegramId, state);
+                List<InlineKeyboardRow> rows = new ArrayList<>();
+                for (Room room : available) rows.add(new InlineKeyboardRow(TelegramKeyboardUtil.createButton("🏠 Phòng " + room.getRoomNumber(),
+                        "TENANT_ASSIGN_ROOM_" + room.getId() + "_" + targetTelegramId)));
+                rows.add(new InlineKeyboardRow(TelegramKeyboardUtil.createButton("❌ Hủy", "/cancel")));
+                messageSender.sendMessageWithKeyboard(chatId, "🏠 Chọn phòng cho " + tenant.getFullName() + ":", new InlineKeyboardMarkup(rows));
+            } else startAssignPhone(chatId, landlordTelegramId, targetTelegramId, roomId, messageSender);
         } catch (NumberFormatException e) {
-            messageSender.sendMessage(chatId, "❌ Telegram ID phải là một số nguyên hợp lệ. Vui lòng nhập lại:");
+            messageSender.sendNotice(chatId, "❌ Telegram ID phải là một số nguyên hợp lệ. Vui lòng nhập lại:");
         } catch (BusinessException e) {
-            messageSender.sendMessage(chatId, "❌ " + e.getMessage());
+            messageSender.sendNotice(chatId, "❌ " + e.getMessage());
+        }
+    }
+
+    private void startAssignPhone(Long chatId, Long landlordId, Long tenantId, Long roomId, BotMessageSender sender) {
+        User tenant = userService.findByTelegramIdWithRoom(tenantId)
+                .orElseThrow(() -> new BusinessException("Không tìm thấy người thuê. Người thuê cần gửi /start cho bot trước."));
+        if (tenant.getRole() != Role.MEMBER) throw new BusinessException("Chỉ MEMBER mới có thể được xếp vào phòng.");
+        if (tenant.getRoom() != null) throw new BusinessException("Người này đã thuê phòng, không thể thêm vào phòng mới.");
+        Room room = roomService.getRoomById(roomId);
+        if (roomService.isRoomFull(room)) throw new BusinessException("Phòng đã đủ số người.");
+        UserConversationState next = new UserConversationState(Step.ASSIGN_TENANT_PHONE);
+        next.setTargetRoomId(roomId);
+        next.setTargetUserTelegramId(tenantId);
+        stateService.setState(landlordId, next);
+        sender.sendPrompt(chatId, "📞 Nhập số điện thoại liên hệ của " + tenant.getFullName()
+                + " (bắt buộc) để hoàn tất thêm vào phòng " + room.getRoomNumber()
+                + ":\n\nVí dụ: 0912345678 hoặc +84912345678.");
+    }
+
+    private void processTenantContactInput(Long chatId, String text, Long landlordId, UserConversationState state, BotMessageSender sender) {
+        try {
+            if (state.getStep() == Step.EDIT_TENANT_TELEGRAM_ID) {
+                Long tenantId = Long.parseLong(text.trim());
+                User tenant = userService.findByTelegramIdWithRoom(tenantId)
+                        .orElseThrow(() -> new BusinessException("Không tìm thấy người thuê. Vui lòng nhập lại Telegram ID."));
+                if (tenant.getRole() != Role.MEMBER || tenant.getRoom() == null)
+                    throw new BusinessException("Người này không phải người thuê đang được xếp phòng. Vui lòng nhập lại ID.");
+                state.setTargetUserTelegramId(tenantId);
+                state.setTargetRoomId(tenant.getRoom().getId());
+                state.setStep(Step.EDIT_TENANT_PHONE);
+                stateService.setState(landlordId, state);
+                sender.sendPrompt(chatId, "✏️ " + tenant.getFullName() + " (ID: " + tenantId + ")\n📞 Số điện thoại hiện tại: "
+                        + tenant.getPhoneNumberDisplay() + "\n\nNhập số điện thoại mới (bắt buộc):\nVí dụ: 0912345678 hoặc +84912345678.");
+            } else if (state.getStep() == Step.EDIT_TENANT_CONFIRM) {
+                sender.sendNotice(chatId, "Vui lòng bấm Xác nhận để lưu.");
+            } else {
+                String phone = com.boardinghousebot.util.PhoneNumberUtil.normalizeRequired(text);
+                if (state.getStep() == Step.ASSIGN_TENANT_PHONE) {
+                    User assigned = roomService.assignMemberToRoom(landlordId, state.getTargetUserTelegramId(), state.getTargetRoomId(), phone);
+                    stateService.clearState(landlordId);
+                    sender.sendResultAndMenu(chatId, "✅ Đã xếp người thuê " + assigned.getFullName()
+                            + " vào phòng thành công!\n📞 Số điện thoại: " + assigned.getPhoneNumberDisplay(), TelegramKeyboardUtil.getLandlordTenantManagementMenu());
+                } else {
+                    User tenant = userService.findByTelegramIdWithRoom(state.getTargetUserTelegramId())
+                            .orElseThrow(() -> new BusinessException("Không tìm thấy người thuê."));
+                    state.getData().put("phone", phone);
+                    state.setStep(Step.EDIT_TENANT_CONFIRM);
+                    stateService.setState(landlordId, state);
+                    sender.sendMessageWithKeyboard(chatId, "✏️ XÁC NHẬN SỬA SỐ ĐIỆN THOẠI\n\n👤 " + tenant.getFullName()
+                            + " (ID: " + tenant.getTelegramId() + ")\n📞 Hiện tại: " + tenant.getPhoneNumberDisplay()
+                            + "\n📞 Số mới: " + phone + "",
+                            TelegramKeyboardUtil.getConfirmKeyboard("TENANT_EDIT_CONFIRM", "/cancel"));
+                }
+            }
+        } catch (NumberFormatException e) {
+            sender.sendNotice(chatId, "❌ Telegram ID phải là số nguyên hợp lệ. Vui lòng nhập lại.");
+        } catch (BusinessException e) {
+            sender.sendNotice(chatId, "❌ " + e.getMessage());
         }
     }
 
@@ -359,7 +516,7 @@ public class TenantCommandHandler implements CommandHandler {
         try {
             String[] parts = text.split("\\s+");
             if (parts.length < 3) {
-                messageSender.sendMessage(chatId, "Cú pháp không đúng. Vui lòng nhập: `/move <Telegram_ID> <Số_Phòng_Đích>`");
+                startMoveTenantWizard(chatId, landlordTelegramId, stateService.getState(landlordTelegramId), messageSender);
                 return;
             }
             Long targetTelegramId = Long.parseLong(parts[1]);
@@ -369,45 +526,57 @@ public class TenantCommandHandler implements CommandHandler {
                     .orElseThrow(() -> new BusinessException("Không tìm thấy phòng " + targetRoomNumber + "."));
 
             User movedUser = roomService.moveMemberToRoom(landlordTelegramId, targetTelegramId, targetRoom.getId());
-            messageSender.sendMessage(chatId, "✅ Đã chuyển người thuê " + movedUser.getFullName() + " sang phòng " + targetRoom.getRoomNumber() + " thành công!");
+            messageSender.sendResultAndMenu(chatId, "✅ Đã chuyển người thuê " + movedUser.getFullName() + " sang phòng " + targetRoom.getRoomNumber() + " thành công!", TelegramKeyboardUtil.getLandlordTenantManagementMenu());
         } catch (NumberFormatException e) {
-            messageSender.sendMessage(chatId, "Telegram ID phải là một số nguyên hợp lệ.");
+            messageSender.sendNotice(chatId, "Telegram ID phải là một số nguyên hợp lệ.");
         } catch (BusinessException e) {
-            messageSender.sendMessage(chatId, "❌ " + e.getMessage());
+            messageSender.sendNotice(chatId, "❌ " + e.getMessage());
         }
     }
 
     private void processMoveTenantInput(Long chatId, String input, Long landlordTelegramId, UserConversationState state, BotMessageSender messageSender) {
-        handleMoveCommand(chatId, input, landlordTelegramId, messageSender);
-        stateService.clearState(landlordTelegramId);
+        if (state.getTargetRoomId() != null) state.getData().put("sourceRoomId", state.getTargetRoomId());
+        processMoveTenantMemberIdInput(chatId, input, landlordTelegramId, state, messageSender);
     }
 
     private void handleRemoveCommand(Long chatId, String text, Long landlordTelegramId, BotMessageSender messageSender) {
         try {
             String[] parts = text.split("\\s+");
             if (parts.length < 2) {
-                messageSender.sendMessage(chatId, "Cú pháp không đúng. Vui lòng nhập: `/remove_tenant <Telegram_ID>`");
+                stateService.setState(landlordTelegramId, new UserConversationState(Step.REMOVE_TENANT_INPUT));
+                messageSender.sendPrompt(chatId, "Nhập Telegram ID của người thuê cần xóa khỏi phòng:");
                 return;
             }
             Long targetTelegramId = Long.parseLong(parts[1]);
-            removeTenant(chatId, landlordTelegramId, targetTelegramId, messageSender);
+            promptRemoveTenant(chatId, landlordTelegramId, targetTelegramId, messageSender);
         } catch (NumberFormatException e) {
-            messageSender.sendMessage(chatId, "Telegram ID phải là một số nguyên hợp lệ.");
+            messageSender.sendNotice(chatId, "Telegram ID phải là một số nguyên hợp lệ.");
         }
     }
 
-    private void removeTenant(Long chatId, Long landlordTelegramId, Long targetTelegramId, BotMessageSender messageSender) {
+    private void promptRemoveTenant(Long chatId, Long landlordTelegramId, Long targetTelegramId, BotMessageSender messageSender) {
         try {
-            User removedUser = roomService.removeMemberFromRoom(landlordTelegramId, targetTelegramId);
-            messageSender.sendMessage(chatId, "✅ Đã xóa người thuê " + removedUser.getFullName() + " (ID: " + targetTelegramId + ") khỏi phòng thành công!");
+            User tenant = userService.findByTelegramIdWithRoom(targetTelegramId)
+                    .orElseThrow(() -> new BusinessException("Không tìm thấy người thuê. Vui lòng nhập lại ID."));
+            if (tenant.getRole() != Role.MEMBER || tenant.getRoom() == null)
+                throw new BusinessException("Người này chưa được xếp phòng. Vui lòng nhập lại ID.");
+            if (contractRepository.findActiveContractByMemberTelegramId(targetTelegramId).isPresent())
+                throw new BusinessException("Cần kết thúc hợp đồng đang hiệu lực của người đại diện trước khi xóa khỏi phòng.");
+            var next = new UserConversationState(Step.REMOVE_TENANT_CONFIRM);
+            next.setTargetUserTelegramId(targetTelegramId); next.setTargetRoomId(tenant.getRoom().getId());
+            stateService.setState(landlordTelegramId, next);
+            messageSender.sendMessageWithKeyboard(chatId, "⚠️ XÁC NHẬN XÓA NGƯỜI THUÊ\n\n👤 " + tenant.getFullName()
+                    + " (ID: " + targetTelegramId + ")\n🏠 Phòng: " + tenant.getRoom().getRoomNumber()
+                    + "\n\nTài khoản vẫn được giữ lại.", TelegramKeyboardUtil.getConfirmKeyboard(
+                            "TENANT_REMOVE_CONFIRM_" + tenant.getRoom().getId() + "_" + targetTelegramId, "/cancel"));
         } catch (BusinessException e) {
-            messageSender.sendMessage(chatId, "❌ " + e.getMessage());
+            messageSender.sendNotice(chatId, "❌ " + e.getMessage());
         }
     }
 
     private void listAllTenants(Long chatId, User user, BotMessageSender messageSender) {
-        if (user.getRole() != Role.LANDLORD && user.getRole() != Role.ADMIN) {
-            messageSender.sendMessage(chatId, "Bạn không có quyền thực hiện chức năng này.");
+        if (user.getRole() != Role.LANDLORD) {
+            messageSender.sendNotice(chatId, "Bạn không có quyền thực hiện chức năng này.");
             return;
         }
 
@@ -426,7 +595,7 @@ public class TenantCommandHandler implements CommandHandler {
             sb.append(index++).append(". ").append(u.getFullName() != null ? u.getFullName() : "MEMBER").append("\n");
             sb.append("   📱 Telegram ID: ").append(u.getTelegramId()).append("\n");
             sb.append("   🏠 Phòng: ").append(roomNum).append("\n");
-            sb.append("   Lệnh xóa: `/remove_tenant ").append(u.getTelegramId()).append("`\n\n");
+            sb.append("   📞 Số điện thoại: ").append(u.getPhoneNumberDisplay()).append("\n\n");
         }
 
         messageSender.sendMessageWithKeyboard(chatId, sb.toString().trim(), TelegramKeyboardUtil.getLandlordTenantManagementMenu());
@@ -437,7 +606,7 @@ public class TenantCommandHandler implements CommandHandler {
         List<User> tenants = roomService.getRoomTenants(roomId);
 
         if (tenants == null || tenants.isEmpty()) {
-            messageSender.sendMessage(chatId, "👥 NGƯỜI THUÊ PHÒNG " + room.getRoomNumber() + "\n\nPhòng hiện chưa có người ở.");
+            messageSender.sendMessageWithKeyboard(chatId, "👥 NGƯỜI THUÊ PHÒNG " + room.getRoomNumber() + "\n\nPhòng hiện chưa có người ở.", TelegramKeyboardUtil.getBackKeyboard("ROOM_DETAIL_" + roomId));
             return;
         }
 
@@ -446,10 +615,11 @@ public class TenantCommandHandler implements CommandHandler {
         for (User u : tenants) {
             sb.append(index++).append(". ").append(u.getFullName() != null ? u.getFullName() : "Tenant").append("\n");
             sb.append("   📱 Telegram ID: ").append(u.getTelegramId()).append("\n");
+            sb.append("   📞 Số điện thoại: ").append(u.getPhoneNumberDisplay()).append("\n");
             sb.append("   Username: ").append(u.getUsername() != null ? u.getUsername() : "Chưa đặt").append("\n\n");
         }
 
-        messageSender.sendMessage(chatId, sb.toString().trim());
+        messageSender.sendMessageWithKeyboard(chatId, sb.toString().trim(), TelegramKeyboardUtil.getBackKeyboard("ROOM_DETAIL_" + roomId));
     }
 
     private String extractText(Update update) {

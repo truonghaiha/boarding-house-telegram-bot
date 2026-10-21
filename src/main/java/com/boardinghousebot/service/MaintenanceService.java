@@ -1,7 +1,6 @@
 package com.boardinghousebot.service;
 
 import com.boardinghousebot.domain.audit.AuditAction;
-import com.boardinghousebot.domain.contract.Contract;
 import com.boardinghousebot.domain.maintenance.MaintenanceRequest;
 import com.boardinghousebot.domain.maintenance.MaintenanceStatus;
 import com.boardinghousebot.domain.maintenance.state.MaintenanceState;
@@ -11,7 +10,6 @@ import com.boardinghousebot.domain.user.User;
 import com.boardinghousebot.exception.BusinessException;
 import com.boardinghousebot.observer.MaintenanceCreatedEvent;
 import com.boardinghousebot.observer.MaintenanceStatusChangedEvent;
-import com.boardinghousebot.repository.ContractRepository;
 import com.boardinghousebot.repository.MaintenanceRequestRepository;
 import com.boardinghousebot.repository.UserRepository;
 import org.slf4j.Logger;
@@ -21,7 +19,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Optional;
 
 @Service
 public class MaintenanceService {
@@ -30,20 +27,20 @@ public class MaintenanceService {
 
     private final MaintenanceRequestRepository maintenanceRequestRepository;
     private final UserRepository userRepository;
-    private final ContractRepository contractRepository;
+    private final RoomStayService roomStayService;
     private final AuthorizationService authorizationService;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
 
     public MaintenanceService(MaintenanceRequestRepository maintenanceRequestRepository,
                               UserRepository userRepository,
-                              ContractRepository contractRepository,
+                              RoomStayService roomStayService,
                               AuthorizationService authorizationService,
                               AuditLogService auditLogService,
                               ApplicationEventPublisher eventPublisher) {
         this.maintenanceRequestRepository = maintenanceRequestRepository;
         this.userRepository = userRepository;
-        this.contractRepository = contractRepository;
+        this.roomStayService = roomStayService;
         this.authorizationService = authorizationService;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
@@ -55,8 +52,7 @@ public class MaintenanceService {
                 .orElseThrow(() -> new BusinessException("Không tìm thấy thông tin người dùng."));
         authorizationService.requireMember(member);
 
-        Optional<Contract> activeContract = contractRepository.findActiveContractByMemberTelegramId(memberTelegramId);
-        Room room = activeContract.map(Contract::getRoom).orElseGet(member::getRoom);
+        Room room = roomStayService.getCurrentRoom(memberTelegramId).orElse(null);
 
         if (room == null) {
             throw new BusinessException("Bạn chưa thuê phòng nào trong hệ thống nên không thể gửi yêu cầu sự cố.");
@@ -121,6 +117,18 @@ public class MaintenanceService {
     public MaintenanceRequest getMaintenanceRequestById(Long id) {
         return maintenanceRequestRepository.findByIdWithDetails(id)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy yêu cầu sự cố #" + id));
+    }
+
+    @Transactional(readOnly = true)
+    public MaintenanceRequest getMaintenanceForUser(User viewer, Long requestId) {
+        MaintenanceRequest request = getMaintenanceRequestById(requestId);
+        if (viewer.getRole() != com.boardinghousebot.domain.user.Role.LANDLORD) {
+            authorizationService.requireMember(viewer);
+            if (!viewer.getTelegramId().equals(request.getMember().getTelegramId())) {
+                throw new BusinessException("Bạn không có quyền xem yêu cầu sự cố này.");
+            }
+        }
+        return request;
     }
 
     @Transactional(readOnly = true)

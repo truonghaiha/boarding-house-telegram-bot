@@ -33,6 +33,7 @@ public interface ContractRepository extends JpaRepository<Contract, Long> {
     List<Contract> findExpiringContracts(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
     boolean existsByMemberTelegramIdAndStatus(Long memberTelegramId, ContractStatus status);
+    boolean existsByMemberTelegramId(Long memberTelegramId);
 
     boolean existsByRoomIdAndStatus(Long roomId, ContractStatus status);
 }

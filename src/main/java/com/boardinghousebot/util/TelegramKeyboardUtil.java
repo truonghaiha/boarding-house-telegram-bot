@@ -10,6 +10,11 @@ import java.util.List;
 
 public class TelegramKeyboardUtil {
 
+    public static InlineKeyboardMarkup getCancelKeyboard() {
+        return new InlineKeyboardMarkup(List.of(
+                new InlineKeyboardRow(createButton("❌ Hủy", "/cancel"))));
+    }
+
     public static InlineKeyboardMarkup getRoleMenu(Role role) {
         if (role == null) {
             return getMemberMenu();
@@ -32,6 +37,7 @@ public class TelegramKeyboardUtil {
                 createButton("📋 Nhật ký hệ thống", "ADMIN_AUDIT"),
                 createButton("👤 Tài khoản", "ACCOUNT_INFO")
         ));
+        rows.add(new InlineKeyboardRow(createButton("🔔 Thông báo cá nhân", "NOTIFICATION_LIST_ALL")));
 
         return new InlineKeyboardMarkup(rows);
     }
@@ -53,9 +59,6 @@ public class TelegramKeyboardUtil {
         ));
         rows.add(new InlineKeyboardRow(
                 createButton("🔔 Thông báo", "LANDLORD_NOTIFICATIONS"),
-                createButton("📊 Thống kê", "LANDLORD_STATS")
-        ));
-        rows.add(new InlineKeyboardRow(
                 createButton("👤 Tài khoản", "ACCOUNT_INFO")
         ));
 
@@ -64,6 +67,7 @@ public class TelegramKeyboardUtil {
 
     public static InlineKeyboardMarkup getMemberMenu() {
         List<InlineKeyboardRow> rows = new ArrayList<>();
+        rows.add(new InlineKeyboardRow(createButton("🏘️ Phòng còn chỗ", "MEMBER_AVAILABLE_ROOMS")));
 
         rows.add(new InlineKeyboardRow(
                 createButton("🏠 Phòng của tôi", "MEMBER_ROOM"),
@@ -78,10 +82,24 @@ public class TelegramKeyboardUtil {
                 createButton("🔔 Thông báo", "MEMBER_NOTIFICATIONS")
         ));
         rows.add(new InlineKeyboardRow(
-                createButton("👤 Tài khoản", "ACCOUNT_INFO")
+                createButton("👤 Tài khoản", "ACCOUNT_INFO"),
+                createButton("📞 Thông tin liên hệ chủ trọ", "MEMBER_CONTACT_INFO")
         ));
 
         return new InlineKeyboardMarkup(rows);
+    }
+
+    public static InlineKeyboardMarkup getUnassignedMemberMenu() {
+        return new InlineKeyboardMarkup(List.of(
+                new InlineKeyboardRow(createButton("🏘️ Phòng còn chỗ", "MEMBER_AVAILABLE_ROOMS")),
+                new InlineKeyboardRow(
+                        createButton("👤 Tài khoản", "ACCOUNT_INFO"),
+                        createButton("🔄 Kiểm tra trạng thái", "MEMBER_CHECK_STATUS")
+                ),
+                new InlineKeyboardRow(
+                        createButton("📞 Thông tin liên hệ chủ trọ", "MEMBER_CONTACT_INFO")
+                )
+        ));
     }
 
     public static InlineKeyboardMarkup getAdminUserManagementMenu() {
@@ -102,6 +120,10 @@ public class TelegramKeyboardUtil {
         return new InlineKeyboardMarkup(rows);
     }
 
+    public static InlineKeyboardMarkup getAdminRoleChangePromptKeyboard() {
+        return getCancelKeyboard();
+    }
+
     public static InlineKeyboardMarkup getLandlordRoomManagementMenu() {
         List<InlineKeyboardRow> rows = new ArrayList<>();
 
@@ -110,29 +132,92 @@ public class TelegramKeyboardUtil {
                 createButton("📋 Danh sách phòng", "ROOM_LIST_ALL")
         ));
         rows.add(new InlineKeyboardRow(
-                createButton("🟢 Phòng còn chỗ", "ROOM_LIST_AVAILABLE"),
-                createButton("🔴 Phòng đang ở", "ROOM_LIST_OCCUPIED")
-        ));
-        rows.add(new InlineKeyboardRow(
                 createButton("🔙 Menu chính", "MAIN_MENU")
         ));
 
         return new InlineKeyboardMarkup(rows);
     }
 
+    public static InlineKeyboardMarkup getRoomListKeyboard(List<com.boardinghousebot.domain.room.Room> rooms) {
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        for (var room : rooms) {
+            rows.add(new InlineKeyboardRow(
+                    createButton("🏠 Chi tiết phòng " + room.getRoomNumber(), "ROOM_DETAIL_" + room.getId())
+            ));
+        }
+        rows.addAll(getLandlordRoomManagementMenu().getKeyboard());
+        return new InlineKeyboardMarkup(rows);
+    }
+
     public static InlineKeyboardMarkup getRoomDetailKeyboard(Long roomId) {
+        return getRoomDetailKeyboard(roomId, "ROOM_LIST_ALL");
+    }
+
+    public static InlineKeyboardMarkup getFloorListKeyboard(java.util.Map<String, Integer> floorCounts,
+                                                           int page, int totalPages) {
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        floorCounts.forEach((floor, count) -> rows.add(new InlineKeyboardRow(
+                createButton("🏢 " + RoomFloorUtil.label(floor) + " (" + count + " phòng)",
+                        "ROOM_FLOOR_" + floor + "_0"))));
+        addRoomPageButtons(rows, "ROOM_FLOORS_", page, totalPages);
+        rows.add(new InlineKeyboardRow(createButton("🔙 Quản lý phòng", "LANDLORD_ROOMS")));
+        return new InlineKeyboardMarkup(rows);
+    }
+
+    public static InlineKeyboardMarkup getFloorRoomsKeyboard(List<com.boardinghousebot.domain.room.Room> rooms,
+            String floor, int page, int totalPages, int floorListPage) {
+        return getFloorRoomsKeyboard(rooms, floor, page, totalPages, floorListPage, "ALL");
+    }
+
+    public static InlineKeyboardMarkup getFloorRoomsKeyboard(List<com.boardinghousebot.domain.room.Room> rooms,
+            String floor, int page, int totalPages, int floorListPage, String filter) {
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        rows.add(new InlineKeyboardRow(
+                createButton(("ALL".equals(filter) ? "✓ " : "") + "📋 Tất cả", "ROOM_FLOOR_" + floor + "_0_ALL"),
+                createButton(("AVAILABLE".equals(filter) ? "✓ " : "") + "🟢 Còn chỗ", "ROOM_FLOOR_" + floor + "_0_AVAILABLE"),
+                createButton(("FULL".equals(filter) ? "✓ " : "") + "🔴 Đã đầy", "ROOM_FLOOR_" + floor + "_0_FULL")));
+        String suffix = "ALL".equals(filter) ? "" : "_" + filter;
+        for (var room : rooms) {
+            if (rows.size() == 1 || rows.get(rows.size() - 1).size() == 2) {
+                rows.add(new InlineKeyboardRow());
+            }
+            rows.get(rows.size() - 1).add(createButton("🏠 Phòng " + room.getRoomNumber(),
+                    "ROOM_DETAIL_" + room.getId() + "_F_" + floor + "_" + page + suffix));
+        }
+        addRoomPageButtons(rows, "ROOM_FLOOR_" + floor + "_", page, totalPages, suffix);
+        rows.add(new InlineKeyboardRow(createButton("🔙 Danh sách tầng", "ROOM_FLOORS_" + floorListPage)));
+        return new InlineKeyboardMarkup(rows);
+    }
+
+    private static void addRoomPageButtons(List<InlineKeyboardRow> rows, String prefix, int page, int totalPages) {
+        addRoomPageButtons(rows, prefix, page, totalPages, "");
+    }
+
+    private static void addRoomPageButtons(List<InlineKeyboardRow> rows, String prefix, int page, int totalPages, String suffix) {
+        InlineKeyboardRow navigation = new InlineKeyboardRow();
+        if (page > 0) navigation.add(createButton("⬅️ Trang trước", prefix + (page - 1) + suffix));
+        if (page + 1 < totalPages) navigation.add(createButton("Trang sau ➡️", prefix + (page + 1) + suffix));
+        if (!navigation.isEmpty()) rows.add(navigation);
+    }
+
+    public static InlineKeyboardMarkup getRoomDetailKeyboard(Long roomId, String backCallback) {
         List<InlineKeyboardRow> rows = new ArrayList<>();
 
         rows.add(new InlineKeyboardRow(
                 createButton("👥 Người thuê", "ROOM_TENANTS_" + roomId),
-                createButton("➕ Thêm người thuê", "ROOM_ASSIGN_" + roomId)
+                createButton("🚚 Chuyển phòng", "ROOM_MOVE_" + roomId)
         ));
         rows.add(new InlineKeyboardRow(
-                createButton("🚚 Chuyển phòng", "ROOM_MOVE_" + roomId),
-                createButton("❌ Xóa phòng", "ROOM_DELETE_" + roomId)
+                createButton("➕ Thêm người thuê", "ROOM_ASSIGN_" + roomId),
+                createButton("➖ Xóa người thuê", "ROOM_REMOVE_TENANTS_" + roomId)
         ));
+        rows.add(new InlineKeyboardRow(createButton("💰 Sửa giá phòng", "ROOM_EDIT_RENT_" + roomId),
+                createButton("✏️ Sửa mô tả", "ROOM_EDIT_DESC_" + roomId)));
+        rows.add(new InlineKeyboardRow(createButton("📐 Sửa diện tích", "ROOM_EDIT_AREA_" + roomId),
+                createButton("💵 Sửa tiền cọc", "ROOM_EDIT_DEPOSIT_" + roomId)));
+        rows.add(new InlineKeyboardRow(createButton("❌ Xóa phòng", "ROOM_DELETE_" + roomId)));
         rows.add(new InlineKeyboardRow(
-                createButton("🔙 Danh sách phòng", "ROOM_LIST_ALL")
+                createButton("🔙 Danh sách phòng", backCallback)
         ));
 
         return new InlineKeyboardMarkup(rows);
@@ -149,6 +234,7 @@ public class TelegramKeyboardUtil {
                 createButton("🔄 Chuyển phòng", "TENANT_MOVE_INPUT"),
                 createButton("📋 Danh sách người thuê", "TENANT_LIST_ALL")
         ));
+        rows.add(new InlineKeyboardRow(createButton("✏️ Sửa thông tin người thuê", "TENANT_EDIT_INPUT")));
         rows.add(new InlineKeyboardRow(
                 createButton("🔙 Menu chính", "MAIN_MENU")
         ));
@@ -160,18 +246,29 @@ public class TelegramKeyboardUtil {
         List<InlineKeyboardRow> rows = new ArrayList<>();
 
         rows.add(new InlineKeyboardRow(
-                createButton("➕ Tạo hợp đồng", "CONTRACT_ADD"),
-                createButton("📋 Danh sách hợp đồng", "CONTRACT_LIST_ALL")
+                createButton("➕ Tạo hợp đồng", "CONTRACT_ADD")
         ));
+        rows.add(new InlineKeyboardRow(createButton("📋 Danh sách tất cả hợp đồng", "CONTRACT_LIST_ALL")));
         rows.add(new InlineKeyboardRow(
                 createButton("🟢 Đang hiệu lực", "CONTRACT_LIST_ACTIVE"),
                 createButton("⚫ Đã kết thúc", "CONTRACT_LIST_ENDED")
         ));
         rows.add(new InlineKeyboardRow(
-                createButton("⏰ Sắp hết hạn", "CONTRACT_LIST_EXPIRING"),
-                createButton("🔙 Menu chính", "MAIN_MENU")
+                createButton("⏰ Sắp hết hạn", "CONTRACT_LIST_EXPIRING")
         ));
+        rows.add(new InlineKeyboardRow(createButton("⬅️ Menu chính", "MAIN_MENU")));
 
+        return new InlineKeyboardMarkup(rows);
+    }
+
+    public static InlineKeyboardMarkup getContractListKeyboard(List<com.boardinghousebot.domain.contract.Contract> contracts) {
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        for (var contract : contracts) {
+            if (rows.isEmpty() || rows.get(rows.size() - 1).size() == 2) rows.add(new InlineKeyboardRow());
+            rows.get(rows.size() - 1).add(createButton("📄 HĐ #" + contract.getId() + " – P" + contract.getRoom().getRoomNumber(),
+                    "CONTRACT_DETAIL_" + contract.getId()));
+        }
+        rows.addAll(getBackKeyboard("LANDLORD_CONTRACTS").getKeyboard());
         return new InlineKeyboardMarkup(rows);
     }
 
@@ -185,7 +282,7 @@ public class TelegramKeyboardUtil {
             ));
         }
         rows.add(new InlineKeyboardRow(
-                createButton("📋 Danh sách hợp đồng", "CONTRACT_LIST_ALL"),
+                createButton("🔙 Quay lại", "CONTRACT_LIST_ALL"),
                 createButton("🔙 Menu chính", "MAIN_MENU")
         ));
 
@@ -194,9 +291,11 @@ public class TelegramKeyboardUtil {
 
     public static InlineKeyboardMarkup getLandlordMeterManagementMenu() {
         List<InlineKeyboardRow> rows = new ArrayList<>();
+        rows.add(new InlineKeyboardRow(createButton("⚡ Giá điện cả tòa", "METER_RATE_ELECTRICITY"),
+                createButton("💧 Giá nước cả tòa", "METER_RATE_WATER")));
 
         rows.add(new InlineKeyboardRow(
-                createButton("➕ Ghi chỉ số", "METER_ADD"),
+                createButton("✏️ Ghi số & chốt tiền", "METER_ADD"),
                 createButton("📋 Danh sách chỉ số", "METER_LIST_LATEST")
         ));
         rows.add(new InlineKeyboardRow(
@@ -206,7 +305,7 @@ public class TelegramKeyboardUtil {
         return new InlineKeyboardMarkup(rows);
     }
 
-    public static InlineKeyboardMarkup getMeterFilterKeyboard(Long roomIdFilter, String utilityTypeFilter, Integer monthFilter, Integer yearFilter) {
+    public static InlineKeyboardMarkup getMeterFilterKeyboard() {
         List<InlineKeyboardRow> rows = new ArrayList<>();
 
         rows.add(new InlineKeyboardRow(
@@ -262,7 +361,7 @@ public class TelegramKeyboardUtil {
                 createButton("📋 Danh sách hóa đơn", "INVOICE_LIST_LATEST")
         ));
         rows.add(new InlineKeyboardRow(
-                createButton("💳 Ghi nhận thanh toán", "INVOICE_PAYMENT_SELECT"),
+                createButton("📅 Phòng sắp đến kỳ", "INVOICE_LIST_DUE"),
                 createButton("🔙 Menu chính", "MAIN_MENU")
         ));
 
@@ -279,24 +378,6 @@ public class TelegramKeyboardUtil {
         return new InlineKeyboardMarkup(rows);
     }
 
-    public static InlineKeyboardMarkup getInvoiceFilterKeyboard(Long roomIdFilter, String statusFilter, Integer monthFilter, Integer yearFilter) {
-        List<InlineKeyboardRow> rows = new ArrayList<>();
-
-        rows.add(new InlineKeyboardRow(
-                createButton("📅 Chọn tháng", "INVOICE_FILTER_SELECT_MONTH"),
-                createButton("🏠 Chọn phòng", "INVOICE_FILTER_SELECT_ROOM")
-        ));
-        rows.add(new InlineKeyboardRow(
-                createButton("📊 Trạng thái", "INVOICE_FILTER_SELECT_STATUS"),
-                createButton("🔄 Làm mới", "INVOICE_FILTER_CLEAR")
-        ));
-        rows.add(new InlineKeyboardRow(
-                createButton("🔙 Menu chính", "MAIN_MENU")
-        ));
-
-        return new InlineKeyboardMarkup(rows);
-    }
-
     public static InlineKeyboardMarkup getInvoiceDetailKeyboard(Long invoiceId, boolean isPaid) {
         List<InlineKeyboardRow> rows = new ArrayList<>();
 
@@ -306,7 +387,7 @@ public class TelegramKeyboardUtil {
             ));
         }
         rows.add(new InlineKeyboardRow(
-                createButton("📋 Danh sách hóa đơn", "INVOICE_LIST_LATEST"),
+                createButton("📋 Danh sách hóa đơn", isPaid ? "INVOICE_LIST_PAID" : "INVOICE_LIST_UNPAID"),
                 createButton("🔙 Menu chính", "MAIN_MENU")
         ));
 
@@ -317,12 +398,8 @@ public class TelegramKeyboardUtil {
         List<InlineKeyboardRow> rows = new ArrayList<>();
 
         rows.add(new InlineKeyboardRow(
-                createButton("📋 Tất cả sự cố", "MAINTENANCE_LIST_ALL"),
-                createButton("⏳ Chờ xử lý", "MAINTENANCE_LIST_PENDING")
-        ));
-        rows.add(new InlineKeyboardRow(
-                createButton("⚙️ Đang xử lý", "MAINTENANCE_LIST_IN_PROGRESS"),
-                createButton("✅ Đã hoàn thành", "MAINTENANCE_LIST_RESOLVED")
+                createButton("📋 Cần xử lý", "MAINTENANCE_LIST_ALL"),
+                createButton("✅ Đã xử lý", "MAINTENANCE_LIST_RESOLVED")
         ));
         rows.add(new InlineKeyboardRow(
                 createButton("🔙 Menu chính", "MAIN_MENU")
@@ -334,34 +411,15 @@ public class TelegramKeyboardUtil {
     public static InlineKeyboardMarkup getMaintenanceDetailKeyboard(Long requestId, com.boardinghousebot.domain.maintenance.MaintenanceStatus status) {
         List<InlineKeyboardRow> rows = new ArrayList<>();
 
-        if (status == com.boardinghousebot.domain.maintenance.MaintenanceStatus.PENDING) {
-            rows.add(new InlineKeyboardRow(
-                    createButton("⚙️ Đang xử lý", "MAINTENANCE_UPDATE_IN_PROGRESS_" + requestId),
-                    createButton("✅ Hoàn thành", "MAINTENANCE_UPDATE_RESOLVED_" + requestId)
-            ));
-        } else if (status == com.boardinghousebot.domain.maintenance.MaintenanceStatus.IN_PROGRESS) {
+        if (status != com.boardinghousebot.domain.maintenance.MaintenanceStatus.RESOLVED) {
             rows.add(new InlineKeyboardRow(
                     createButton("✅ Hoàn thành", "MAINTENANCE_UPDATE_RESOLVED_" + requestId)
             ));
         }
 
         rows.add(new InlineKeyboardRow(
-                createButton("📋 Danh sách sự cố", "MAINTENANCE_LIST_ALL"),
-                createButton("🔙 Menu chính", "MAIN_MENU")
-        ));
-
-        return new InlineKeyboardMarkup(rows);
-    }
-
-    public static InlineKeyboardMarkup getMemberMaintenanceMenu() {
-        List<InlineKeyboardRow> rows = new ArrayList<>();
-
-        rows.add(new InlineKeyboardRow(
-                createButton("➕ Báo sự cố mới", "MAINTENANCE_ADD"),
-                createButton("📋 Lịch sử sự cố", "MAINTENANCE_LIST_MEMBER")
-        ));
-        rows.add(new InlineKeyboardRow(
-                createButton("🔙 Menu chính", "MAIN_MENU")
+                createButton("⬅️ Danh sách sự cố", status == com.boardinghousebot.domain.maintenance.MaintenanceStatus.RESOLVED
+                        ? "MAINTENANCE_LIST_RESOLVED" : "MAINTENANCE_LIST_ALL")
         ));
 
         return new InlineKeyboardMarkup(rows);
@@ -371,11 +429,10 @@ public class TelegramKeyboardUtil {
         List<InlineKeyboardRow> rows = new ArrayList<>();
 
         rows.add(new InlineKeyboardRow(
-                createButton("📋 Tất cả thông báo", "NOTIFICATION_LIST_ALL"),
-                createButton("📩 Chưa đọc", "NOTIFICATION_LIST_UNREAD")
+                createButton("📩 Chưa đọc", "NOTIFICATION_LIST_UNREAD"),
+                createButton("✅ Đã đọc", "NOTIFICATION_LIST_READ")
         ));
         rows.add(new InlineKeyboardRow(
-                createButton("✅ Đọc tất cả", "NOTIFICATION_MARK_ALL_READ"),
                 createButton("🔙 Menu chính", "MAIN_MENU")
         ));
 
@@ -391,6 +448,30 @@ public class TelegramKeyboardUtil {
         ));
 
         return new InlineKeyboardMarkup(rows);
+    }
+
+    public static InlineKeyboardMarkup getBackKeyboard(String callback) {
+        return new InlineKeyboardMarkup(List.of(
+                new InlineKeyboardRow(createButton("🔙 Quay lại", callback)),
+                new InlineKeyboardRow(createButton("🔙 Menu chính", "MAIN_MENU"))));
+    }
+
+    public static <T> InlineKeyboardMarkup getDetailListKeyboard(List<T> items, java.util.function.Function<T, String> label,
+            java.util.function.Function<T, String> callback, InlineKeyboardMarkup menu) {
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        for (T item : items) {
+            if (rows.isEmpty() || rows.get(rows.size() - 1).size() == 2) rows.add(new InlineKeyboardRow());
+            rows.get(rows.size() - 1).add(createButton(label.apply(item), callback.apply(item)));
+        }
+        rows.addAll(menu.getKeyboard());
+        return new InlineKeyboardMarkup(rows);
+    }
+
+    public static InlineKeyboardMarkup getOptionalInputKeyboard(com.boardinghousebot.state.UserConversationState.Step step) {
+        if (com.boardinghousebot.state.OptionalInput.skipValue(step).isEmpty())
+            throw new IllegalArgumentException("This input step is required.");
+        return new InlineKeyboardMarkup(List.of(new InlineKeyboardRow(
+                createButton("⏭️ Bỏ qua", "SKIP_INPUT_" + step.name()), createButton("❌ Hủy", "/cancel"))));
     }
 
     public static InlineKeyboardButton createButton(String text, String callbackData) {

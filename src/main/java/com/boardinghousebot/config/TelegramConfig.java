@@ -47,6 +47,22 @@ public class TelegramConfig {
         this.adminId = adminId;
     }
 
+    public Long getRequiredAdminTelegramId() {
+        String value = adminId == null ? "" : adminId.trim();
+        if (value.matches("[1-9][0-9]*")) {
+            try {
+                return Long.valueOf(value);
+            } catch (NumberFormatException ignored) {
+                // Treat overflow as invalid configuration as well.
+            }
+        }
+        throw new IllegalStateException("TELEGRAM_ADMIN_ID phải là một Telegram ID nguyên dương hợp lệ. Kiểm tra .env rồi khởi động lại bot.");
+    }
+
+    public boolean isConfiguredAdmin(Long telegramId) {
+        return getRequiredAdminTelegramId().equals(telegramId);
+    }
+
     public void logConfigurationStatus() {
         log.info("Telegram Bot Configured - Username: {}, Admin ID: {}, Token Provided: {}",
                 botUsername, adminId, (botToken != null && !botToken.isBlank()));

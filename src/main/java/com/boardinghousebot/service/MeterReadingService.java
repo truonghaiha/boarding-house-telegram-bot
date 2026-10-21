@@ -19,7 +19,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -31,15 +30,32 @@ public class MeterReadingService {
 
     private static final Logger log = LoggerFactory.getLogger(MeterReadingService.class);
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private UtilityRateService utilityRateService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.boardinghousebot.repository.InvoiceRepository invoiceRepository;
+
+    public BigDecimal getPeriodUnitPrice(UtilityType type, Integer month, Integer year) {
+        return utilityRateService.forPeriod(type, month, year);
+    }
+
+    @Transactional
+    public MeterReading createReading(Long landlordId, Long roomId, UtilityType type, Integer month, Integer year,
+                                      BigDecimal previous, BigDecimal current) {
+        return createReading(landlordId, roomId, type, month, year, previous, current,
+                getPeriodUnitPrice(type, month, year));
+    }
+
     private final MeterReadingRepository meterReadingRepository;
     private final RoomRepository roomRepository;
     private final UserRepository userRepository;
+    private final RoomStayService roomStayService;
     private final AuthorizationService authorizationService;
     private final AuditLogService auditLogService;
     private final Map<UtilityType, UtilityPricingStrategy> strategyMap;
     private final ApplicationEventPublisher eventPublisher;
 
-    public MeterReadingService(MeterReadingRepository meterReadingRepository,
+    public MeterReadingService(RoomStayService roomStayService, MeterReadingRepository meterReadingRepository,
                                RoomRepository roomRepository,
                                UserRepository userRepository,
                                AuthorizationService authorizationService,
@@ -49,6 +65,7 @@ public class MeterReadingService {
         this.meterReadingRepository = meterReadingRepository;
         this.roomRepository = roomRepository;
         this.userRepository = userRepository;
+        this.roomStayService = roomStayService;
         this.authorizationService = authorizationService;
         this.auditLogService = auditLogService;
         this.strategyMap = pricingStrategies.stream()
@@ -67,6 +84,11 @@ public class MeterReadingService {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy thông tin phòng."));
 
+        if (utilityRateService != null && billingMonth != null && billingYear != null
+                && billingMonth >= 1 && billingMonth <= 12 && billingYear >= 2000 && billingYear <= 2100) {
+            var configured = utilityRateService.at(utilityType, java.time.YearMonth.of(billingYear, billingMonth).atEndOfMonth());
+            if (configured.isPresent()) unitPrice = configured.get().getUnitPrice();
+        }
         validateInputs(billingMonth, billingYear, previousReading, currentReading, unitPrice);
 
         if (meterReadingRepository.existsByRoomIdAndUtilityTypeAndBillingMonthAndBillingYear(roomId, utilityType, billingMonth, billingYear)) {
@@ -87,6 +109,12 @@ public class MeterReadingService {
     }
 
     @Transactional
+    public MeterReading updateReading(Long landlordId, Long readingId, BigDecimal previous, BigDecimal current) {
+        MeterReading reading = getReadingById(readingId);
+        return updateReading(landlordId, readingId, previous, current, reading.getUnitPrice());
+    }
+
+    @Transactional
     public MeterReading updateReading(Long landlordTelegramId, Long readingId,
                                       BigDecimal newPrevious, BigDecimal newCurrent, BigDecimal newUnitPrice) {
         User landlord = userRepository.findByTelegramId(landlordTelegramId)
@@ -95,7 +123,14 @@ public class MeterReadingService {
 
         MeterReading reading = meterReadingRepository.findByIdWithDetails(readingId)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy bản ghi chỉ số."));
+        if (invoiceRepository != null && invoiceRepository.existsByRoomIdAndBillingMonthAndBillingYear(
+                reading.getRoom().getId(),reading.getBillingMonth(),reading.getBillingYear()))
+            throw new BusinessException("Kỳ này đã có hóa đơn, không thể sửa hoặc xóa trực tiếp chỉ số.");
 
+        if (utilityRateService != null && utilityRateService.at(reading.getUtilityType(),
+                java.time.YearMonth.of(reading.getBillingYear(), reading.getBillingMonth()).atEndOfMonth()).isPresent()) {
+            newUnitPrice = reading.getUnitPrice();
+        }
         validateReadings(newPrevious, newCurrent, newUnitPrice);
 
         reading.setPreviousReading(newPrevious);
@@ -119,6 +154,9 @@ public class MeterReadingService {
 
         MeterReading reading = meterReadingRepository.findByIdWithDetails(readingId)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy bản ghi chỉ số."));
+        if (invoiceRepository != null && invoiceRepository.existsByRoomIdAndBillingMonthAndBillingYear(
+                reading.getRoom().getId(),reading.getBillingMonth(),reading.getBillingYear()))
+            throw new BusinessException("Kỳ này đã có hóa đơn, không thể sửa hoặc xóa trực tiếp chỉ số.");
 
         String roomNum = reading.getRoom().getRoomNumber();
         UtilityType type = reading.getUtilityType();
@@ -197,16 +235,23 @@ public class MeterReadingService {
     public List<MeterReading> getMemberRoomReadings(Long memberTelegramId) {
         User member = userRepository.findByTelegramIdWithRoom(memberTelegramId)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy thông tin người dùng."));
-        
-        if (member.getRole() != Role.MEMBER && member.getRole() != Role.LANDLORD && member.getRole() != Role.ADMIN) {
-            throw new BusinessException("Bạn không có quyền truy cập chức năng này.");
-        }
 
-        if (member.getRoom() == null) {
-            return List.of();
-        }
+        authorizationService.requireMember(member);
 
-        return meterReadingRepository.findByRoomIdWithDetails(member.getRoom().getId());
+        return meterReadingRepository.findAllWithDetails().stream()
+                .filter(reading -> roomStayService.canReadPeriod(member, reading.getRoom().getId(), reading.getBillingMonth(), reading.getBillingYear(), reading.getCreatedAt())).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public MeterReading getReadingForUser(User viewer, Long readingId) {
+        MeterReading reading = getReadingById(readingId);
+        if (viewer.getRole() != Role.LANDLORD) {
+            authorizationService.requireMember(viewer);
+            if (!roomStayService.canReadPeriod(viewer, reading.getRoom().getId(), reading.getBillingMonth(), reading.getBillingYear(), reading.getCreatedAt())) {
+                throw new BusinessException("Bạn không có quyền xem chỉ số này.");
+            }
+        }
+        return reading;
     }
 
     public BigDecimal calculateCharge(UtilityType utilityType, BigDecimal consumption, BigDecimal unitPrice) {

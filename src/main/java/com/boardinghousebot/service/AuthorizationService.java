@@ -1,5 +1,6 @@
 package com.boardinghousebot.service;
 
+import com.boardinghousebot.config.TelegramConfig;
 import com.boardinghousebot.domain.user.Role;
 import com.boardinghousebot.domain.user.User;
 import com.boardinghousebot.exception.BusinessException;
@@ -8,11 +9,25 @@ import org.springframework.stereotype.Service;
 @Service
 public class AuthorizationService {
 
+    private final TelegramConfig telegramConfig;
+
+    public AuthorizationService(TelegramConfig telegramConfig) {
+        this.telegramConfig = telegramConfig;
+    }
+
     public boolean hasRole(User user, Role role) {
         if (user == null || user.getRole() == null || role == null) {
             return false;
         }
-        return user.getRole() == role;
+        if (user.getRole() != role) return false;
+        if (role == Role.ADMIN) {
+            try {
+                return telegramConfig.isConfiguredAdmin(user.getTelegramId());
+            } catch (IllegalStateException invalidConfiguration) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public void requireRole(User user, Role requiredRole) {
@@ -26,17 +41,10 @@ public class AuthorizationService {
     }
 
     public void requireLandlord(User user) {
-        if (user == null || user.getRole() == null) {
-            throw new BusinessException("Bạn không có quyền thực hiện chức năng này.");
-        }
-        if (user.getRole() != Role.LANDLORD && user.getRole() != Role.ADMIN) {
-            throw new BusinessException("Bạn không có quyền thực hiện chức năng này.");
-        }
+        requireRole(user, Role.LANDLORD);
     }
 
     public void requireMember(User user) {
-        if (user == null || user.getRole() == null) {
-            throw new BusinessException("Bạn không có quyền thực hiện chức năng này.");
-        }
+        requireRole(user, Role.MEMBER);
     }
 }

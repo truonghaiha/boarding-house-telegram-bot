@@ -30,9 +30,8 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 @SpringBootTest
 @Transactional
@@ -55,6 +54,8 @@ public class NotificationUiFormattingRegressionTest {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired private com.boardinghousebot.repository.NotificationRepository notificationRepository;
 
     @Mock
     private BotMessageSender mockMessageSender;
@@ -111,7 +112,7 @@ public class NotificationUiFormattingRegressionTest {
         assertEquals("Yêu cầu bảo trì mới - Phòng 102", notifA.getTitle());
 
         // Render via NotificationCommandHandler
-        Update update = createCallbackUpdate("/notification", LANDLORD_A_ID);
+        Update update = createCallbackUpdate("NOTIFICATION_DETAIL_" + notifA.getId(), LANDLORD_A_ID);
         notificationCommandHandler.handle(update, landlordA, mockMessageSender);
 
         ArgumentCaptor<String> textCaptor = ArgumentCaptor.forClass(String.class);
@@ -122,7 +123,8 @@ public class NotificationUiFormattingRegressionTest {
 
         // Check NO duplicate icons "🔧 🔧"
         assertFalse(renderedText.contains("🔧 🔧"), "Should NOT contain duplicate icon '🔧 🔧'");
-        assertTrue(renderedText.contains("🔧 Yêu cầu bảo trì mới - Phòng 102 (🔴 MỚI)"));
+        assertTrue(renderedText.contains("🔧 Yêu cầu bảo trì mới - Phòng 102"));
+        assertFalse(notificationService.getNotificationForUser(notifA.getId(), LANDLORD_A_ID).isRead());
 
         // Check NO leading indentation spaces on lines
         assertFalse(renderedText.contains("\n   🏠"), "Should not have leading spaces before 🏠");
@@ -131,7 +133,7 @@ public class NotificationUiFormattingRegressionTest {
         assertTrue(renderedText.contains("\n🕒 "));
 
         // Check incident description displays correctly
-        assertTrue(renderedText.contains("📌 Tiêu đề: Điều hòa hỏng"));
+        assertFalse(renderedText.contains("📌 Tiêu đề:"));
         assertTrue(renderedText.contains("📝 Mô tả: Điều hòa bật không mát"));
         assertTrue(renderedText.contains("👤 Người báo: HD"));
     }
@@ -139,9 +141,9 @@ public class NotificationUiFormattingRegressionTest {
     @Test
     @DisplayName("2 & 3. Role notification: Renders without duplicate 🔔 🔔 and has exactly one icon at the start")
     void testRoleNotification_NoDuplicateIcon() {
-        notificationService.createNotification(LANDLORD_A_ID, NotificationType.ROLE_CHANGED, "Thay đổi vai trò tài khoản", "Bạn đã được nâng cấp từ MEMBER lên LANDLORD.");
+        var notification = notificationService.createNotification(LANDLORD_A_ID, NotificationType.ROLE_CHANGED, "Thay đổi vai trò tài khoản", "Bạn đã được nâng cấp từ MEMBER lên LANDLORD.");
 
-        Update update = createCallbackUpdate("/notification", LANDLORD_A_ID);
+        Update update = createCallbackUpdate("NOTIFICATION_DETAIL_" + notification.getId(), LANDLORD_A_ID);
         notificationCommandHandler.handle(update, landlordA, mockMessageSender);
 
         ArgumentCaptor<String> textCaptor = ArgumentCaptor.forClass(String.class);
@@ -151,7 +153,7 @@ public class NotificationUiFormattingRegressionTest {
         assertNotNull(renderedText);
 
         assertFalse(renderedText.contains("🔔 🔔"), "Should NOT contain duplicate icon '🔔 🔔'");
-        assertTrue(renderedText.contains("🔔 Thay đổi vai trò tài khoản (🔴 MỚI)"));
+        assertTrue(renderedText.contains("🔔 Thay đổi vai trò tài khoản"));
         assertTrue(renderedText.contains("\nBạn đã được nâng cấp từ MEMBER lên LANDLORD."));
         assertFalse(renderedText.contains("\n   Bạn đã được"));
     }
@@ -168,17 +170,78 @@ public class NotificationUiFormattingRegressionTest {
         assertEquals(1, notificationService.getUnreadCount(LANDLORD_B_ID));
 
         // Test Landlord A list rendering
-        Update updateA = createCallbackUpdate("/notification", LANDLORD_A_ID);
+        Update updateA = createCallbackUpdate("NOTIFICATION_LIST_UNREAD", LANDLORD_A_ID);
         notificationCommandHandler.handle(updateA, landlordA, mockMessageSender);
 
         ArgumentCaptor<String> textCaptorA = ArgumentCaptor.forClass(String.class);
         verify(mockMessageSender).sendMessageWithKeyboard(eq(LANDLORD_A_ID), textCaptorA.capture(), any());
 
         String textA = textCaptorA.getValue();
-        assertTrue(textA.contains("📩 Chưa đọc: 2 thông báo"));
-        assertTrue(textA.contains("Notif A1"));
-        assertTrue(textA.contains("Notif A2"));
-        assertFalse(textA.contains("Notif B1"));
+        assertTrue(textA.contains("THÔNG BÁO CHƯA ĐỌC · 2"));
+        var keyboards = ArgumentCaptor.forClass(org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup.class);
+        verify(mockMessageSender).sendMessageWithKeyboard(eq(LANDLORD_A_ID), anyString(), keyboards.capture());
+        var labels = keyboards.getValue().getKeyboard().stream().flatMap(List::stream).map(b -> b.getText()).toList();
+        assertTrue(labels.stream().anyMatch(label -> label.contains("Notif A1")));
+        assertTrue(labels.stream().anyMatch(label -> label.contains("Notif A2")));
+        assertTrue(labels.stream().noneMatch(label -> label.contains("Notif B1")));
+        assertFalse(textA.contains("Msg A1"));
+    }
+
+    @Test void groupsDetailsAndManualReadStateFollowTheSelectedNotification() {
+        var unread = notificationService.createNotification(LANDLORD_A_ID, NotificationType.ROLE_CHANGED, "Thông báo riêng", "Nội dung riêng");
+        notificationCommandHandler.handle(createCallbackUpdate("/notification", LANDLORD_A_ID), landlordA, mockMessageSender);
+        assertEquals(List.of("NOTIFICATION_LIST_UNREAD", "NOTIFICATION_LIST_READ", "MAIN_MENU"), lastActions());
+        clearInvocations(mockMessageSender);
+        notificationCommandHandler.handle(createCallbackUpdate("NOTIFICATION_DETAIL_" + unread.getId(), LANDLORD_A_ID), landlordA, mockMessageSender);
+        assertFalse(notificationService.getNotificationForUser(unread.getId(), LANDLORD_A_ID).isRead());
+        assertEquals(List.of("NOTIFICATION_READ_" + unread.getId(), "NOTIFICATION_LIST_UNREAD"), lastActions());
+        clearInvocations(mockMessageSender);
+        notificationCommandHandler.handle(createCallbackUpdate("NOTIFICATION_READ_" + unread.getId(), LANDLORD_A_ID), landlordA, mockMessageSender);
+        assertTrue(notificationService.getNotificationForUser(unread.getId(), LANDLORD_A_ID).isRead());
+        assertEquals(List.of("NOTIFICATION_LIST_READ"), lastActions());
+        assertTrue(notificationService.getUnreadNotificationsForUser(LANDLORD_A_ID).isEmpty());
+        assertEquals(1, notificationService.getReadNotificationsForUser(LANDLORD_A_ID).size());
+        clearInvocations(mockMessageSender);
+        notificationCommandHandler.handle(createCallbackUpdate("NOTIFICATION_LIST_READ", LANDLORD_A_ID), landlordA, mockMessageSender);
+        assertEquals(List.of("NOTIFICATION_DETAIL_" + unread.getId(), "NOTIFICATION_MENU", "MAIN_MENU"), lastActions());
+        clearInvocations(mockMessageSender);
+        notificationCommandHandler.handle(createCallbackUpdate("NOTIFICATION_LIST_UNREAD", LANDLORD_A_ID), landlordA, mockMessageSender);
+        assertEquals(List.of("NOTIFICATION_MENU", "MAIN_MENU"), lastActions());
+    }
+
+    @Test void markAllReadsOnlyCurrentAccountsUnreadNotifications() {
+        notificationService.createNotification(LANDLORD_A_ID, NotificationType.ROLE_CHANGED, "A1", "Nội dung 1");
+        notificationService.createNotification(LANDLORD_A_ID, NotificationType.ROLE_CHANGED, "A2", "Nội dung 2");
+        var other = notificationService.createNotification(LANDLORD_B_ID, NotificationType.ROLE_CHANGED, "B1", "Nội dung B");
+        notificationCommandHandler.handle(createCallbackUpdate("NOTIFICATION_LIST_UNREAD", LANDLORD_A_ID), landlordA, mockMessageSender);
+        assertTrue(lastActions().contains("NOTIFICATION_MARK_ALL_READ"));
+        clearInvocations(mockMessageSender);
+        notificationCommandHandler.handle(createCallbackUpdate("NOTIFICATION_MARK_ALL_READ", LANDLORD_A_ID), landlordA, mockMessageSender);
+        assertTrue(notificationService.getUnreadNotificationsForUser(LANDLORD_A_ID).isEmpty());
+        assertEquals(2, notificationService.getReadNotificationsForUser(LANDLORD_A_ID).size());
+        assertFalse(notificationService.getNotificationForUser(other.getId(), LANDLORD_B_ID).isRead());
+        assertEquals(List.of("NOTIFICATION_MENU", "MAIN_MENU"), lastActions());
+        clearInvocations(mockMessageSender);
+        notificationCommandHandler.handle(createCallbackUpdate("NOTIFICATION_LIST_READ", LANDLORD_A_ID), landlordA, mockMessageSender);
+        assertFalse(lastActions().contains("NOTIFICATION_MARK_ALL_READ"));
+    }
+
+    @Test void foreignAndDeletedNotificationsCannotBeOpenedOrMarkedRead() {
+        var foreign = notificationService.createNotification(LANDLORD_B_ID, NotificationType.ROLE_CHANGED, "Riêng tư", "Nội dung B");
+        for (String prefix : List.of("NOTIFICATION_DETAIL_", "NOTIFICATION_READ_"))
+            notificationCommandHandler.handle(createCallbackUpdate(prefix + foreign.getId(), LANDLORD_A_ID), landlordA, mockMessageSender);
+        assertFalse(notificationService.getNotificationForUser(foreign.getId(), LANDLORD_B_ID).isRead());
+        verify(mockMessageSender, times(2)).sendNotice(eq(LANDLORD_A_ID), contains("không có quyền"));
+        verify(mockMessageSender, never()).sendMessageWithKeyboard(eq(LANDLORD_A_ID), anyString(), any());
+        notificationRepository.deleteById(foreign.getId());
+        notificationCommandHandler.handle(createCallbackUpdate("NOTIFICATION_DETAIL_" + foreign.getId(), LANDLORD_B_ID), landlordB, mockMessageSender);
+        verify(mockMessageSender).sendNotice(eq(LANDLORD_B_ID), contains("không còn tồn tại"));
+    }
+
+    private List<String> lastActions() {
+        var captured = ArgumentCaptor.forClass(org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup.class);
+        verify(mockMessageSender, atLeastOnce()).sendMessageWithKeyboard(eq(LANDLORD_A_ID), anyString(), captured.capture());
+        return captured.getValue().getKeyboard().stream().flatMap(List::stream).map(b -> b.getCallbackData()).toList();
     }
 
     private Update createCallbackUpdate(String callbackData, Long chatId) {

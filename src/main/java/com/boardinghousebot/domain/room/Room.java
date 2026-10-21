@@ -21,6 +21,17 @@ public class Room {
     @Column(name = "monthly_rent", nullable = false, precision = 12, scale = 2)
     private BigDecimal monthlyRent;
 
+    @Column(name = "area", precision = 10, scale = 2)
+    private BigDecimal area;
+
+    @Column(name = "required_deposit", precision = 12, scale = 2)
+    private BigDecimal requiredDeposit;
+
+    public BigDecimal getArea() { return area; }
+    public void setArea(BigDecimal area) { this.area = area; }
+    public BigDecimal getRequiredDeposit() { return requiredDeposit; }
+    public void setRequiredDeposit(BigDecimal requiredDeposit) { this.requiredDeposit = requiredDeposit; }
+
     @Column(name = "max_occupants", nullable = false)
     private Integer maxOccupants;
 

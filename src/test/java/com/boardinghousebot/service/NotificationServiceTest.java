@@ -30,6 +30,9 @@ class NotificationServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private com.boardinghousebot.repository.ContractRepository contractRepository;
+
     @InjectMocks
     private NotificationService notificationService;
 
@@ -45,6 +48,9 @@ class NotificationServiceTest {
     @Test
     @DisplayName("createNotification saves notification correctly")
     void createNotification_Success() {
+        var room = new com.boardinghousebot.domain.room.Room("101", java.math.BigDecimal.TEN, 2, "");
+        room.setId(1L); recipient.setRoom(room);
+        when(contractRepository.existsByRoomIdAndStatus(1L, com.boardinghousebot.domain.contract.ContractStatus.ACTIVE)).thenReturn(true);
         when(userRepository.findByTelegramId(100L)).thenReturn(Optional.of(recipient));
         when(notificationRepository.save(any(Notification.class))).thenAnswer(i -> i.getArgument(0));
 
@@ -54,6 +60,23 @@ class NotificationServiceTest {
         assertEquals(100L, created.getRecipient().getTelegramId());
         assertEquals("Thứ hai", created.getTitle());
         assertFalse(created.isRead());
+    }
+
+    @Test void notificationsAreNotStoredWithoutActiveRental() {
+        when(userRepository.findByTelegramId(100L)).thenReturn(Optional.of(recipient));
+        notificationService.createNotification(100L, NotificationType.ROOM_CHANGED, "Phòng", "Trước hợp đồng");
+        var room = new com.boardinghousebot.domain.room.Room("101", java.math.BigDecimal.TEN, 2, "");
+        room.setId(1L); recipient.setRoom(room);
+        notificationService.createNotification(100L, NotificationType.CONTRACT_ENDED, "Kết thúc", "Sau hợp đồng", "CONTRACT", 1L);
+        verify(notificationRepository, never()).save(any());
+    }
+
+    @Test void landlordNotificationsAreStoredWithoutRentalContract() {
+        recipient.setRole(Role.LANDLORD);
+        when(userRepository.findByTelegramId(100L)).thenReturn(Optional.of(recipient));
+        notificationService.createNotification(100L, NotificationType.MAINTENANCE_CREATED, "Sự cố", "Nội dung");
+        verify(notificationRepository).save(any());
+        verifyNoInteractions(contractRepository);
     }
 
     @Test

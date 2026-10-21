@@ -2,7 +2,6 @@ package com.boardinghousebot.service;
 
 import com.boardinghousebot.domain.audit.AuditAction;
 import com.boardinghousebot.domain.invoice.Invoice;
-import com.boardinghousebot.domain.invoice.InvoiceStatus;
 import com.boardinghousebot.domain.invoice.Payment;
 import com.boardinghousebot.domain.invoice.PaymentMethod;
 import com.boardinghousebot.domain.user.User;
@@ -27,21 +26,33 @@ public class PaymentService {
     private final InvoiceRepository invoiceRepository;
     private final UserRepository userRepository;
     private final AuthorizationService authorizationService;
+    private final RoomStayService roomStayService;
     private final AuditLogService auditLogService;
     private final org.springframework.context.ApplicationEventPublisher eventPublisher;
+    private final CheckoutSettlementService checkoutSettlement;
 
-    public PaymentService(PaymentRepository paymentRepository,
+    public PaymentService(RoomStayService roomStayService, PaymentRepository paymentRepository,
                           InvoiceRepository invoiceRepository,
                           UserRepository userRepository,
                           AuthorizationService authorizationService,
                           AuditLogService auditLogService,
-                          org.springframework.context.ApplicationEventPublisher eventPublisher) {
+                          org.springframework.context.ApplicationEventPublisher eventPublisher,
+                          CheckoutSettlementService checkoutSettlement) {
+        this.checkoutSettlement=checkoutSettlement;
         this.paymentRepository = paymentRepository;
+        this.roomStayService = roomStayService;
         this.invoiceRepository = invoiceRepository;
         this.userRepository = userRepository;
         this.authorizationService = authorizationService;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
+    }
+
+    @Transactional
+    public Payment recordFullPayment(Long actor, Long invoiceId, PaymentMethod method, String note) {
+        var invoice=invoiceRepository.findByIdWithDetails(invoiceId)
+                .orElseThrow(() -> new BusinessException("Không tìm thấy hóa đơn."));
+        return recordPayment(actor,invoiceId,invoice.getRemainingAmount(),method,note);
     }
 
     @Transactional
@@ -82,12 +93,14 @@ public class PaymentService {
 
         log.info("Recorded Payment ID={} for Invoice ID={}, Amount={}, Status={}", savedPayment.getId(), invoiceId, amount, invoice.getStatus());
 
-        List<Long> recipientTelegramIds = userRepository.findByRoomId(invoice.getRoom().getId()).stream()
+        List<Long> recipientTelegramIds = userRepository.findByRole(com.boardinghousebot.domain.user.Role.MEMBER).stream()
                 .filter(u -> u.getRole() == com.boardinghousebot.domain.user.Role.MEMBER)
+                .filter(u -> roomStayService.canReadInvoice(u, invoice))
                 .map(User::getTelegramId)
                 .toList();
 
         eventPublisher.publishEvent(new com.boardinghousebot.observer.PaymentRecordedEvent(savedPayment, recipientTelegramIds));
+        checkoutSettlement.settle(landlordTelegramId,invoice.getContract()==null?null:invoice.getContract().getId());
 
         return savedPayment;
     }

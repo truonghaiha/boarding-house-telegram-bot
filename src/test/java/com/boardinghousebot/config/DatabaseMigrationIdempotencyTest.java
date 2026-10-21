@@ -52,12 +52,14 @@ class DatabaseMigrationIdempotencyTest {
         String newSchemaSql = """
             CREATE TABLE notifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type VARCHAR(50) NOT NULL CHECK (type IN ('MAINTENANCE_CREATED','MAINTENANCE_STATUS_CHANGED','ROLE_CHANGED','ROOM_CHANGED','INVOICE_CREATED','INVOICE_DUE_REMINDER','INVOICE_OVERDUE','CONTRACT_EXPIRING','CONTRACT_CREATED','ELECTRICITY_CREATED','WATER_CREATED','PAYMENT_RECORDED')),
+                type VARCHAR(50) NOT NULL CHECK (type IN ('MAINTENANCE_CREATED','MAINTENANCE_STATUS_CHANGED','ROLE_CHANGED','ROOM_CHANGED','INVOICE_CREATED','INVOICE_DUE_REMINDER','INVOICE_OVERDUE','CONTRACT_EXPIRING','CONTRACT_CREATED','CONTRACT_ENDED','ELECTRICITY_CREATED','WATER_CREATED','PAYMENT_RECORDED','UTILITY_RATE_CHANGED','UTILITY_CYCLE_FINALIZED')),
                 recipient_id BIGINT NOT NULL
             )
         """;
         assertTrue(migrationService.isSchemaUpToDate(newSchemaSql),
                 "Schema with all NotificationTypes must return true (up to date)");
+        assertFalse(migrationService.isSchemaUpToDate(newSchemaSql.replace("'CONTRACT_ENDED',", "")),
+                "Schema without CONTRACT_ENDED needs migration");
 
         // Schema without CHECK constraint is also up-to-date
         String noCheckSchemaSql = "CREATE TABLE notifications (id INTEGER, type VARCHAR(50))";

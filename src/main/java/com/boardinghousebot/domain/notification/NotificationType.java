@@ -10,8 +10,11 @@ public enum NotificationType {
     INVOICE_OVERDUE("Hóa đơn quá hạn", "⏰"),
     CONTRACT_EXPIRING("Hợp đồng sắp hết hạn", "📜"),
     CONTRACT_CREATED("Hợp đồng mới", "📄"),
+    CONTRACT_ENDED("Hợp đồng đã kết thúc", "📄"),
     ELECTRICITY_CREATED("Chỉ số điện mới", "⚡"),
     WATER_CREATED("Chỉ số nước mới", "💧"),
+    UTILITY_CYCLE_FINALIZED("Chốt điện nước", "⚡"),
+    UTILITY_RATE_CHANGED("Thay đổi giá điện nước", "🔔"),
     PAYMENT_RECORDED("Thanh toán hóa đơn", "💳");
 
     private final String displayName;

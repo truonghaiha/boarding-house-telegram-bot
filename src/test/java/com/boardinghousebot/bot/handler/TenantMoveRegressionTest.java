@@ -130,7 +130,7 @@ public class TenantMoveRegressionTest {
 
         tenantCommandHandler.handle(update, landlord, mockMessageSender);
 
-        verify(mockMessageSender).sendMessage(eq(LANDLORD_ID), contains("Không tìm thấy người dùng với Telegram ID 9999999999"));
+        verify(mockMessageSender).sendNotice(eq(LANDLORD_ID), contains("Không tìm thấy người dùng với Telegram ID 9999999999"));
     }
 
     @Test
@@ -143,7 +143,7 @@ public class TenantMoveRegressionTest {
 
         tenantCommandHandler.handle(update, landlord, mockMessageSender);
 
-        verify(mockMessageSender).sendMessage(eq(LANDLORD_ID), contains("Chỉ MEMBER mới có thể được chuyển phòng"));
+        verify(mockMessageSender).sendNotice(eq(LANDLORD_ID), contains("Chỉ MEMBER mới có thể được chuyển phòng"));
     }
 
     @Test
@@ -158,7 +158,7 @@ public class TenantMoveRegressionTest {
 
         tenantCommandHandler.handle(update, landlord, mockMessageSender);
 
-        verify(mockMessageSender).sendMessage(eq(LANDLORD_ID), contains("Người dùng này hiện chưa thuộc phòng nào"));
+        verify(mockMessageSender).sendNotice(eq(LANDLORD_ID), contains("Người dùng này hiện chưa thuộc phòng nào"));
     }
 
     @Test
@@ -206,7 +206,7 @@ public class TenantMoveRegressionTest {
         assertEquals("102", updatedMember.getRoom().getRoomNumber());
 
         // Verify success message sent
-        verify(mockMessageSender).sendMessageWithKeyboard(eq(LANDLORD_ID), contains("Đã chuyển người thuê"), any());
+        verify(mockMessageSender).sendResultAndMenu(eq(LANDLORD_ID), contains("Đã chuyển người thuê"), any());
     }
 
     private Update createMessageUpdate(String text, Long chatId) {

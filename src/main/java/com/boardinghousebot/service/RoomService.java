@@ -27,6 +27,16 @@ public class RoomService {
 
     private static final Logger log = LoggerFactory.getLogger(RoomService.class);
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private UtilityRateService utilityRateService;
+
+    public String utilityPriceDisplay(com.boardinghousebot.domain.meter.UtilityType type) {
+        if (utilityRateService == null) return "Chưa thiết lập";
+        return utilityRateService.current(type).map(r -> r.getUnitPrice().toPlainString() + " VNĐ/" + type.getUnit())
+                .orElse("Chưa thiết lập");
+    }
+
+    private final RoomStayService roomStayService;
     private final RoomRepository roomRepository;
     private final UserRepository userRepository;
     private final AuthorizationService authorizationService;
@@ -34,12 +44,13 @@ public class RoomService {
     private final org.springframework.context.ApplicationEventPublisher eventPublisher;
     private final ContractRepository contractRepository;
 
-    public RoomService(RoomRepository roomRepository,
+    public RoomService(RoomStayService roomStayService, RoomRepository roomRepository,
                        UserRepository userRepository,
                        AuthorizationService authorizationService,
                        AuditLogService auditLogService,
                        org.springframework.context.ApplicationEventPublisher eventPublisher,
                        ContractRepository contractRepository) {
+        this.roomStayService = roomStayService;
         this.roomRepository = roomRepository;
         this.userRepository = userRepository;
         this.authorizationService = authorizationService;
@@ -103,6 +114,48 @@ public class RoomService {
     }
 
     @Transactional
+    public Room createRoom(Long landlordTelegramId, String roomNumber, BigDecimal monthlyRent,
+                           Integer maxOccupants, String description, BigDecimal area, BigDecimal deposit) {
+        validateDetails(area, deposit);
+        Room room = createRoom(landlordTelegramId, roomNumber, monthlyRent, maxOccupants, description);
+        room.setArea(area);
+        room.setRequiredDeposit(deposit);
+        return roomRepository.save(room);
+    }
+
+    @Transactional
+    public Room updateRoomDetails(Long landlordTelegramId, Long roomId, BigDecimal area, BigDecimal deposit) {
+        User landlord = userRepository.findByTelegramId(landlordTelegramId)
+                .orElseThrow(() -> new BusinessException("Không tìm thấy người dùng."));
+        authorizationService.requireLandlord(landlord);
+        if (area != null && area.signum() <= 0) throw new BusinessException("Diện tích phải lớn hơn 0.");
+        if (deposit != null && deposit.signum() < 0) throw new BusinessException("Tiền cọc không được âm.");
+        Room room = getRoomById(roomId);
+        if (area != null) room.setArea(area);
+        if (deposit != null) room.setRequiredDeposit(deposit);
+        auditLogService.logAction(landlordTelegramId, AuditAction.LANDLORD_UPDATE_ROOM,
+                "Cập nhật diện tích/tiền cọc yêu cầu phòng " + room.getRoomNumber());
+        return roomRepository.save(room);
+    }
+
+    private void validateDetails(BigDecimal area, BigDecimal deposit) {
+        if (area == null || area.signum() <= 0) throw new BusinessException("Diện tích phải lớn hơn 0.");
+        if (deposit == null || deposit.signum() < 0) throw new BusinessException("Tiền cọc phải là số không âm.");
+    }
+
+    @Transactional
+    public Room updateRoomRent(Long landlordTelegramId, Long roomId, BigDecimal rent) {
+        Room room = getRoomById(roomId);
+        return updateRoom(landlordTelegramId, roomId, room.getRoomNumber(), rent, room.getMaxOccupants(), room.getDescription());
+    }
+
+    @Transactional
+    public Room updateRoomDescription(Long landlordTelegramId, Long roomId, String description) {
+        Room room = getRoomById(roomId);
+        return updateRoom(landlordTelegramId, roomId, room.getRoomNumber(), room.getMonthlyRent(), room.getMaxOccupants(), description);
+    }
+
+    @Transactional
     public void deleteRoom(Long landlordTelegramId, Long roomId) {
         User landlord = userRepository.findByTelegramId(landlordTelegramId)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy người dùng."));
@@ -156,6 +209,16 @@ public class RoomService {
 
     @Transactional
     public User assignMemberToRoom(Long landlordTelegramId, Long targetTelegramId, Long roomId) {
+        return assignMember(landlordTelegramId, targetTelegramId, roomId, null);
+    }
+
+    @Transactional
+    public User assignMemberToRoom(Long landlordTelegramId, Long targetTelegramId, Long roomId, String phoneNumber) {
+        return assignMember(landlordTelegramId, targetTelegramId, roomId,
+                com.boardinghousebot.util.PhoneNumberUtil.normalizeRequired(phoneNumber));
+    }
+
+    private User assignMember(Long landlordTelegramId, Long targetTelegramId, Long roomId, String phoneNumber) {
         User landlord = userRepository.findByTelegramId(landlordTelegramId)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy người dùng."));
         authorizationService.requireLandlord(landlord);
@@ -168,7 +231,7 @@ public class RoomService {
         }
 
         if (targetUser.getRoom() != null) {
-            throw new BusinessException("Người dùng này đã được xếp vào phòng " + targetUser.getRoom().getRoomNumber() + ".");
+            throw new BusinessException("Người này đã thuê phòng, không thể thêm vào phòng mới.");
         }
 
         Room room = roomRepository.findById(roomId)
@@ -178,6 +241,8 @@ public class RoomService {
             throw new BusinessException("Phòng đã đủ số người.");
         }
 
+        if (phoneNumber != null) targetUser.setPhoneNumber(com.boardinghousebot.util.PhoneNumberUtil.normalizeRequired(phoneNumber));
+        roomStayService.enter(targetUser, room, java.time.LocalDateTime.now());
         targetUser.setRoom(room);
         User savedUser = userRepository.save(targetUser);
 
@@ -197,6 +262,16 @@ public class RoomService {
 
     @Transactional
     public User removeMemberFromRoom(Long landlordTelegramId, Long targetTelegramId) {
+        return removeMemberFromRoom(landlordTelegramId, targetTelegramId, null);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<Long> getMemberActiveContractId(Long telegramId) {
+        return contractRepository.findActiveContractByMemberTelegramId(telegramId).map(Contract::getId);
+    }
+
+    @Transactional
+    public User removeMemberFromRoom(Long landlordTelegramId, Long targetTelegramId, Long expectedRoomId) {
         User landlord = userRepository.findByTelegramId(landlordTelegramId)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy người dùng."));
         authorizationService.requireLandlord(landlord);
@@ -208,7 +283,14 @@ public class RoomService {
         if (currentRoom == null) {
             throw new BusinessException("Người dùng chưa được xếp vào phòng nào.");
         }
+        if (expectedRoomId != null && !expectedRoomId.equals(currentRoom.getId())) {
+            throw new BusinessException("Người thuê không còn ở phòng đã chọn. Vui lòng kiểm tra lại.");
+        }
 
+        if (contractRepository.existsByMemberTelegramIdAndStatus(targetTelegramId, ContractStatus.ACTIVE)) {
+            throw new BusinessException("Cần kết thúc hợp đồng đang hiệu lực trước khi đưa người thuê ra khỏi phòng.");
+        }
+        roomStayService.leave(targetUser, java.time.LocalDateTime.now());
         targetUser.setRoom(null);
         User savedUser = userRepository.save(targetUser);
 
@@ -285,6 +367,9 @@ public class RoomService {
         }
 
         // Update targetUser's room
+        java.time.LocalDateTime movedAt = java.time.LocalDateTime.now();
+        roomStayService.leave(targetUser, movedAt);
+        roomStayService.enter(targetUser, targetRoom, movedAt);
         targetUser.setRoom(targetRoom);
         User savedUser = userRepository.save(targetUser);
 
@@ -328,10 +413,7 @@ public class RoomService {
 
     @Transactional(readOnly = true)
     public Optional<Room> getMemberRoom(Long memberTelegramId) {
-        User member = userRepository.findByTelegramIdWithRoom(memberTelegramId)
-                .orElseThrow(() -> new BusinessException("Không tìm thấy người dùng."));
-        authorizationService.requireMember(member);
-        return Optional.ofNullable(member.getRoom());
+        return roomStayService.getCurrentRoom(memberTelegramId);
     }
 
     public int getCurrentOccupantCount(Long roomId) {

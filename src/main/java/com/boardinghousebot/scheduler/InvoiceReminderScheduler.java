@@ -35,7 +35,7 @@ public class InvoiceReminderScheduler {
         this.telegramNotificationService = telegramNotificationService;
     }
 
-    @Scheduled(cron = "0 0 8 * * ?") // Daily at 08:00 AM
+    @Scheduled(cron = "0 0 8 * * ?", zone="Asia/Ho_Chi_Minh") // Daily at 08:00 AM
     @Transactional
     public void processInvoiceReminders() {
         log.info("Starting scheduled job: processInvoiceReminders");
@@ -46,7 +46,7 @@ public class InvoiceReminderScheduler {
 
     @Transactional
     public void checkUpcomingDueInvoices() {
-        LocalDate targetDueDate = LocalDate.now().plusDays(3);
+        LocalDate targetDueDate = com.boardinghousebot.util.BillingDates.today().plusDays(3);
         List<Invoice> upcomingInvoices = invoiceRepository.findInvoicesDueOn(targetDueDate);
 
         for (Invoice invoice : upcomingInvoices) {
@@ -83,7 +83,7 @@ public class InvoiceReminderScheduler {
 
     @Transactional
     public void checkOverdueInvoices() {
-        LocalDate today = LocalDate.now();
+        LocalDate today = com.boardinghousebot.util.BillingDates.today();
         List<Invoice> overdueInvoices = invoiceRepository.findOverdueInvoices(today);
 
         for (Invoice invoice : overdueInvoices) {

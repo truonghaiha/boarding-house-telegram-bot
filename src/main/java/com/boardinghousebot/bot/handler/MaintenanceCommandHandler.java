@@ -15,9 +15,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 
 import java.time.format.DateTimeFormatter;
-import java.util.List;
 
 @Component
 public class MaintenanceCommandHandler implements CommandHandler {
@@ -45,6 +46,15 @@ public class MaintenanceCommandHandler implements CommandHandler {
 
     @Override
     public void handle(Update update, User user, BotMessageSender messageSender) {
+        String action = update.hasMessage() ? update.getMessage().getText() : update.getCallbackQuery().getData();
+        Long actionChatId = update.hasMessage() ? update.getMessage().getChatId() : update.getCallbackQuery().getMessage().getChatId();
+        var actionStep = stateService.getState(user.getTelegramId()).getStep();
+        if (!com.boardinghousebot.bot.command.RoleActionPolicy.allows(user, getCommand(), action, actionStep, update.hasMessage())) {
+            stateService.clearState(user.getTelegramId());
+            messageSender.sendNotice(actionChatId, "❌ Bạn không có quyền thực hiện chức năng này.");
+            return;
+        }
+
         Long chatId = extractChatId(update);
         String text = extractText(update);
         UserConversationState state = stateService.getState(user.getTelegramId());
@@ -62,7 +72,7 @@ public class MaintenanceCommandHandler implements CommandHandler {
                     isUpdate ? "❌ Đã hủy thao tác xử lý sự cố." : "❌ Đã hủy thao tác.";
 
             if (user.getRole() == Role.MEMBER) {
-                messageSender.sendMessageWithKeyboard(chatId, cancelMsg, TelegramKeyboardUtil.getMemberMaintenanceMenu());
+                messageSender.sendMessageWithKeyboard(chatId, cancelMsg, TelegramKeyboardUtil.getMemberMenu());
             } else {
                 messageSender.sendMessageWithKeyboard(chatId, cancelMsg, TelegramKeyboardUtil.getLandlordMaintenanceManagementMenu());
             }
@@ -72,13 +82,14 @@ public class MaintenanceCommandHandler implements CommandHandler {
         // Callbacks for status updates
         if (text.startsWith("MAINTENANCE_UPDATE_IN_PROGRESS_")) {
             Long requestId = Long.parseLong(text.replace("MAINTENANCE_UPDATE_IN_PROGRESS_", "").trim());
-            startUpdateStatusFlow(chatId, user, requestId, MaintenanceStatus.IN_PROGRESS, state, messageSender);
+            messageSender.sendNotice(chatId, "Đã bỏ trạng thái Đang xử lý. Khi xử lý xong, hãy bấm Hoàn thành.");
+            showMaintenanceDetail(chatId, user, requestId, messageSender);
             return;
         }
 
         if (text.startsWith("MAINTENANCE_UPDATE_RESOLVED_")) {
             Long requestId = Long.parseLong(text.replace("MAINTENANCE_UPDATE_RESOLVED_", "").trim());
-            startUpdateStatusFlow(chatId, user, requestId, MaintenanceStatus.RESOLVED, state, messageSender);
+            updateStatus(chatId, user, requestId, MaintenanceStatus.RESOLVED, messageSender);
             return;
         }
 
@@ -99,72 +110,59 @@ public class MaintenanceCommandHandler implements CommandHandler {
             case "LANDLORD_MAINTENANCE", "MEMBER_MAINTENANCE", "MAINTENANCE_MENU", "/maintenance" -> showMaintenanceMenu(chatId, user, messageSender);
             case "MAINTENANCE_ADD" -> startCreateMaintenanceFlow(chatId, user, state, messageSender);
             case "MAINTENANCE_LIST_ALL" -> listMaintenanceRequests(chatId, user, null, messageSender);
-            case "MAINTENANCE_LIST_PENDING" -> listMaintenanceRequests(chatId, user, MaintenanceStatus.PENDING, messageSender);
-            case "MAINTENANCE_LIST_IN_PROGRESS" -> listMaintenanceRequests(chatId, user, MaintenanceStatus.IN_PROGRESS, messageSender);
+            case "MAINTENANCE_LIST_PENDING", "MAINTENANCE_LIST_IN_PROGRESS" -> listMaintenanceRequests(chatId, user, null, messageSender);
             case "MAINTENANCE_LIST_RESOLVED" -> listMaintenanceRequests(chatId, user, MaintenanceStatus.RESOLVED, messageSender);
-            case "MAINTENANCE_LIST_MEMBER" -> listMemberMaintenanceRequests(chatId, user, messageSender);
+            case "MAINTENANCE_LIST_MEMBER" -> messageSender.sendMessageWithKeyboard(chatId, "📌 MENU CHÍNH", TelegramKeyboardUtil.getMemberMenu());
             default -> showMaintenanceMenu(chatId, user, messageSender);
         }
     }
 
     private void showMaintenanceMenu(Long chatId, User user, BotMessageSender messageSender) {
         if (user.getRole() == Role.MEMBER) {
-            messageSender.sendMessageWithKeyboard(chatId, "🔧 BÁO CÁO SỰ CỐ & BẢO TRÌ\n\nVui lòng chọn thao tác bên dưới:", TelegramKeyboardUtil.getMemberMaintenanceMenu());
+            startCreateMaintenanceFlow(chatId, user, stateService.getState(user.getTelegramId()), messageSender);
         } else {
-            messageSender.sendMessageWithKeyboard(chatId, "🔧 QUẢN LÝ BẢO TRÌ & SỰ CỐ\n\nVui lòng chọn thao tác bên dưới:", TelegramKeyboardUtil.getLandlordMaintenanceManagementMenu());
+            messageSender.sendMessageWithKeyboard(chatId, "🔧 BẢO TRÌ & SỰ CỐ\n\nChọn nhóm sự cố:",
+                    TelegramKeyboardUtil.getLandlordMaintenanceManagementMenu());
         }
     }
 
     private void startCreateMaintenanceFlow(Long chatId, User user, UserConversationState state, BotMessageSender messageSender) {
         if (user.getRole() != Role.MEMBER) {
-            messageSender.sendMessage(chatId, "❌ Chỉ người thuê phòng mới có thể báo cáo sự cố.");
+            messageSender.sendNotice(chatId, "❌ Chỉ người thuê phòng mới có thể báo cáo sự cố.");
             return;
         }
 
-        state.setStep(UserConversationState.Step.CREATE_MAINTENANCE_TITLE);
+        state.setStep(UserConversationState.Step.CREATE_MAINTENANCE_DESC);
         stateService.setState(user.getTelegramId(), state);
 
-        messageSender.sendMessage(chatId, "🔧 BÁO CÁO SỰ CỐ MỚI\n\nNhập tiêu đề sự cố (ví dụ: Hỏng vòi nước, Mất điện phòng):\n\nGửi /cancel để hủy.");
+        messageSender.sendPrompt(chatId, "🔧 BÁO CÁO SỰ CỐ\n\nNhập chi tiết mô tả sự cố:");
     }
 
-    private void startUpdateStatusFlow(Long chatId, User user, Long requestId, MaintenanceStatus newStatus, UserConversationState state, BotMessageSender messageSender) {
-        if (user.getRole() != Role.LANDLORD && user.getRole() != Role.ADMIN) {
-            messageSender.sendMessage(chatId, "❌ Bạn không có quyền thực hiện chức năng này.");
+    private void updateStatus(Long chatId, User user, Long requestId, MaintenanceStatus newStatus, BotMessageSender messageSender) {
+        if (user.getRole() != Role.LANDLORD) {
+            messageSender.sendNotice(chatId, "❌ Bạn không có quyền thực hiện chức năng này.");
             return;
         }
 
-        state.getData().put("requestId", requestId);
-        state.getData().put("newStatus", newStatus.name());
-        state.setStep(UserConversationState.Step.UPDATE_MAINTENANCE_NOTE);
-        stateService.setState(user.getTelegramId(), state);
-
-        String promptMsg = String.format("🔧 XỬ LÝ SỰ CỐ #%d -> %s %s\n\nNhập ghi chú xử lý (ví dụ: Đã hẹn thợ sửa lúc 14h hoặc gửi '-' nếu không có ghi chú):\n\nGửi /cancel để hủy.",
-                requestId, newStatus.getIcon(), newStatus.getDisplayName());
-
-        messageSender.sendMessage(chatId, promptMsg);
+        try {
+            MaintenanceRequest req = maintenanceService.updateMaintenanceStatus(user.getTelegramId(), requestId, newStatus, "");
+            stateService.clearState(user.getTelegramId());
+            messageSender.sendResultAndMenu(chatId, "✅ Sự cố #" + req.getId() + ": " + req.getStatus().getDisplayName(),
+                    TelegramKeyboardUtil.getMaintenanceDetailKeyboard(req.getId(), req.getStatus()));
+        } catch (BusinessException e) {
+            messageSender.sendNotice(chatId, "❌ " + e.getMessage());
+        }
     }
 
     private void handleConversationStep(Long chatId, User user, String input, UserConversationState state, BotMessageSender messageSender) {
         switch (state.getStep()) {
-            case CREATE_MAINTENANCE_TITLE -> {
-                String title = input.trim();
-                if (title.isEmpty() || title.length() > 100) {
-                    messageSender.sendMessage(chatId, "❌ Tiêu đề không được để trống và không quá 100 ký tự. Vui lòng nhập lại:");
-                    return;
-                }
-                state.getData().put("title", title);
-                state.setStep(UserConversationState.Step.CREATE_MAINTENANCE_DESC);
-                stateService.setState(user.getTelegramId(), state);
-
-                messageSender.sendMessage(chatId, "📝 Nhập chi tiết mô tả sự cố (ví dụ: Vòi nước bồn rửa mặt bị gãy gây rò rỉ nước):\n\nGửi /cancel để hủy.");
-            }
-            case CREATE_MAINTENANCE_DESC -> {
+            case CREATE_MAINTENANCE_TITLE, CREATE_MAINTENANCE_DESC -> {
                 String desc = input.trim();
                 if (desc.isEmpty() || desc.length() > 500) {
-                    messageSender.sendMessage(chatId, "❌ Mô tả không được để trống và không quá 500 ký tự. Vui lòng nhập lại:");
+                    messageSender.sendNotice(chatId, "❌ Mô tả không được để trống và không quá 500 ký tự. Vui lòng nhập lại:");
                     return;
                 }
-                String title = (String) state.getData().get("title");
+                String title = desc.length() <= 100 ? desc : desc.substring(0, 97) + "...";
 
                 try {
                     MaintenanceRequest req = maintenanceService.createMaintenanceRequest(user.getTelegramId(), title, desc);
@@ -172,56 +170,24 @@ public class MaintenanceCommandHandler implements CommandHandler {
 
                     String successMsg = String.format("""
                             ✅ Đã gửi báo cáo sự cố thành công!
-                            
+
                             🆔 Mã sự cố: #%d
                             🏠 Phòng: %s
-                            📌 Tiêu đề: %s
                             📝 Mô tả: %s
                             📊 Trạng thái: %s %s
-                            
+
                             Chủ nhà sẽ nhận được thông báo và xử lý sớm nhất.
                             """,
                             req.getId(),
                             req.getRoom().getRoomNumber(),
-                            req.getTitle(),
                             req.getDescription(),
                             req.getStatus().getIcon(),
                             req.getStatus().getDisplayName());
 
-                    messageSender.sendMessageWithKeyboard(chatId, successMsg, TelegramKeyboardUtil.getMemberMaintenanceMenu());
+                    messageSender.sendResultAndMenu(chatId, successMsg, TelegramKeyboardUtil.getMemberMenu());
                 } catch (BusinessException e) {
                     stateService.clearState(user.getTelegramId());
-                    messageSender.sendMessageWithKeyboard(chatId, "❌ " + e.getMessage(), TelegramKeyboardUtil.getMemberMaintenanceMenu());
-                }
-            }
-            case UPDATE_MAINTENANCE_NOTE -> {
-                Long requestId = (Long) state.getData().get("requestId");
-                MaintenanceStatus newStatus = MaintenanceStatus.valueOf((String) state.getData().get("newStatus"));
-                String note = "-".equals(input.trim()) ? "" : input.trim();
-
-                try {
-                    MaintenanceRequest req = maintenanceService.updateMaintenanceStatus(user.getTelegramId(), requestId, newStatus, note);
-                    stateService.clearState(user.getTelegramId());
-
-                    String successMsg = String.format("""
-                            ✅ Đã cập nhật trạng thái sự cố #%d!
-                            
-                            🏠 Phòng: %s
-                            📌 Tiêu đề: %s
-                            📊 Trạng thái mới: %s %s
-                            📝 Ghi chú chủ nhà: %s
-                            """,
-                            req.getId(),
-                            req.getRoom().getRoomNumber(),
-                            req.getTitle(),
-                            req.getStatus().getIcon(),
-                            req.getStatus().getDisplayName(),
-                            req.getLandlordNote() != null && !req.getLandlordNote().isBlank() ? req.getLandlordNote() : "(Không)");
-
-                    messageSender.sendMessageWithKeyboard(chatId, successMsg, TelegramKeyboardUtil.getLandlordMaintenanceManagementMenu());
-                } catch (BusinessException e) {
-                    stateService.clearState(user.getTelegramId());
-                    messageSender.sendMessageWithKeyboard(chatId, "❌ " + e.getMessage(), TelegramKeyboardUtil.getLandlordMaintenanceManagementMenu());
+                    messageSender.sendNotice(chatId, "❌ " + e.getMessage());
                 }
             }
             default -> {
@@ -232,83 +198,57 @@ public class MaintenanceCommandHandler implements CommandHandler {
     }
 
     private void listMaintenanceRequests(Long chatId, User user, MaintenanceStatus filterStatus, BotMessageSender messageSender) {
-        List<MaintenanceRequest> requests = filterStatus == null ?
-                maintenanceService.getAllMaintenanceRequests() :
-                maintenanceService.getMaintenanceRequestsByStatus(filterStatus);
-
-        String title = filterStatus == null ? "🔧 DANH SÁCH BẢO TRÌ & SỰ CỐ" : "🔧 SỰ CỐ: " + filterStatus.getDisplayName();
-
-        if (requests.isEmpty()) {
-            messageSender.sendMessageWithKeyboard(chatId, title + "\n\nKhông có yêu cầu sự cố nào.", TelegramKeyboardUtil.getLandlordMaintenanceManagementMenu());
-            return;
+        boolean completed = filterStatus == MaintenanceStatus.RESOLVED;
+        var requests = maintenanceService.getAllMaintenanceRequests().stream()
+                .filter(r -> (r.getStatus() == MaintenanceStatus.RESOLVED) == completed)
+                .sorted(java.util.Comparator.comparingInt((MaintenanceRequest r) -> r.getStatus() == MaintenanceStatus.PENDING ? 0 : 1)
+                        .thenComparing(MaintenanceRequest::getCreatedAt, java.util.Comparator.reverseOrder())
+                        .thenComparing(MaintenanceRequest::getId, java.util.Comparator.reverseOrder()))
+                .toList();
+        var rows = new java.util.ArrayList<InlineKeyboardRow>();
+        for (var request : requests) {
+            String summary = request.getTitle().replaceAll("\\s+", " ").trim();
+            if (summary.length() > 45) summary = summary.substring(0, 42) + "...";
+            String icon = completed ? "✅" : "🆕";
+            rows.add(new InlineKeyboardRow(TelegramKeyboardUtil.createButton(
+                    icon + " Phòng " + request.getRoom().getRoomNumber() + " · " + summary,
+                    "MAINTENANCE_DETAIL_" + request.getId())));
         }
-
-        StringBuilder sb = new StringBuilder(title + "\n\n");
-        for (MaintenanceRequest r : requests) {
-            sb.append("🆔 #").append(r.getId()).append(" - ").append(r.getStatus().getIcon()).append(" ").append(r.getStatus().getDisplayName()).append("\n");
-            sb.append("   🏠 Phòng: ").append(r.getRoom().getRoomNumber()).append(" (").append(r.getMember().getFullName()).append(")\n");
-            sb.append("   📌 Tiêu đề: ").append(r.getTitle()).append("\n");
-            sb.append("   🕒 Thời gian: ").append(r.getCreatedAt().format(DATE_TIME_FORMATTER)).append("\n");
-            sb.append("   Chi tiết: `/maintenance_detail_").append(r.getId()).append("`\n\n");
-        }
-
-        messageSender.sendMessageWithKeyboard(chatId, sb.toString().trim(), TelegramKeyboardUtil.getLandlordMaintenanceManagementMenu());
-    }
-
-    private void listMemberMaintenanceRequests(Long chatId, User user, BotMessageSender messageSender) {
-        List<MaintenanceRequest> requests = maintenanceService.getMaintenanceRequestsByMember(user.getTelegramId());
-
-        if (requests.isEmpty()) {
-            messageSender.sendMessageWithKeyboard(chatId, "🔧 LỊCH SỬ BÁO SỰ CỐ\n\nBạn chưa gửi báo cáo sự cố nào.", TelegramKeyboardUtil.getMemberMaintenanceMenu());
-            return;
-        }
-
-        StringBuilder sb = new StringBuilder("🔧 LỊCH SỬ BÁO SỰ CỐ PHÒNG TÔI\n\n");
-        for (MaintenanceRequest r : requests) {
-            sb.append("🆔 #").append(r.getId()).append(" - ").append(r.getStatus().getIcon()).append(" ").append(r.getStatus().getDisplayName()).append("\n");
-            sb.append("   📌 Tiêu đề: ").append(r.getTitle()).append("\n");
-            sb.append("   📝 Mô tả: ").append(r.getDescription()).append("\n");
-            sb.append("   🕒 Ngày báo: ").append(r.getCreatedAt().format(DATE_TIME_FORMATTER)).append("\n");
-            if (r.getLandlordNote() != null && !r.getLandlordNote().isBlank()) {
-                sb.append("   💬 Phản hồi chủ nhà: ").append(r.getLandlordNote()).append("\n");
-            }
-            sb.append("\n");
-        }
-
-        messageSender.sendMessageWithKeyboard(chatId, sb.toString().trim(), TelegramKeyboardUtil.getMemberMaintenanceMenu());
+        rows.add(new InlineKeyboardRow(TelegramKeyboardUtil.createButton("⬅️ Bảo trì", "LANDLORD_MAINTENANCE")));
+        rows.add(new InlineKeyboardRow(TelegramKeyboardUtil.createButton("⬅️ Menu chính", "MAIN_MENU")));
+        String title = completed ? "✅ SỰ CỐ ĐÃ XỬ LÝ" : "🔧 SỰ CỐ CẦN XỬ LÝ";
+        messageSender.sendMessageWithKeyboard(chatId, title + " · " + requests.size()
+                + (requests.isEmpty() ? completed ? "\n\nChưa có sự cố đã xử lý." : "\n\nKhông có sự cố cần xử lý."
+                : "\n\nChọn sự cố để xem chi tiết."), new InlineKeyboardMarkup(rows));
     }
 
     private void showMaintenanceDetail(Long chatId, User user, Long requestId, BotMessageSender messageSender) {
-        MaintenanceRequest r = maintenanceService.getMaintenanceRequestById(requestId);
+        MaintenanceRequest r = maintenanceService.getMaintenanceForUser(user, requestId);
 
         String detailText = String.format("""
                 🔧 CHI TIẾT SỰ CỐ #%d
-                
+
                 🏠 Phòng: %s
-                👤 Người báo: %s (SĐT: %s)
-                📌 Tiêu đề: %s
+                👤 Người báo: %s
                 📝 Mô tả: %s
                 📊 Trạng thái: %s %s
                 🕒 Ngày báo: %s
-                %s
-                💬 Ghi chú xử lý: %s
                 """,
                 r.getId(),
                 r.getRoom().getRoomNumber(),
                 r.getMember().getFullName(),
-                r.getMember().getUsername() != null ? "@" + r.getMember().getUsername() : "ID: " + r.getMember().getTelegramId(),
-                r.getTitle(),
                 r.getDescription(),
-                r.getStatus().getIcon(), r.getStatus().getDisplayName(),
-                r.getCreatedAt().format(DATE_TIME_FORMATTER),
-                r.getResolvedAt() != null ? "✅ Hoàn thành lúc: " + r.getResolvedAt().format(DATE_TIME_FORMATTER) + "\n" : "",
-                r.getLandlordNote() != null && !r.getLandlordNote().isBlank() ? r.getLandlordNote() : "(Chưa có)"
+                r.getStatus() == MaintenanceStatus.RESOLVED ? "✅" : "⏳",
+                r.getStatus() == MaintenanceStatus.RESOLVED ? "Đã xử lý" : "Cần xử lý",
+                r.getCreatedAt().format(DATE_TIME_FORMATTER)
         );
+        if (r.getResolvedAt() != null)
+            detailText += "✅ Hoàn thành lúc: " + r.getResolvedAt().format(DATE_TIME_FORMATTER) + "\n";
 
-        if (user.getRole() == Role.LANDLORD || user.getRole() == Role.ADMIN) {
+        if (user.getRole() == Role.LANDLORD) {
             messageSender.sendMessageWithKeyboard(chatId, detailText.trim(), TelegramKeyboardUtil.getMaintenanceDetailKeyboard(r.getId(), r.getStatus()));
         } else {
-            messageSender.sendMessage(chatId, detailText.trim());
+            messageSender.sendMessageWithKeyboard(chatId, detailText.trim(), TelegramKeyboardUtil.getMemberMenu());
         }
     }
 

@@ -23,6 +23,8 @@ public class DatabaseMigrationService {
     @PostConstruct
     public void migrateOnStartup() {
         migrateSchemaIfNeeded();
+        migrateInvoiceCycleIndexes();
+        migratePaymentMethods();
     }
 
     /**
@@ -56,7 +58,7 @@ public class DatabaseMigrationService {
             try {
                 stmt.execute("PRAGMA foreign_keys=OFF;");
 
-                // Create new notifications table with updated CHECK constraint containing all 11 NotificationType values
+                // Create a notifications table that accepts all current notification types.
                 stmt.execute("""
                     CREATE TABLE notifications_new (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,9 +78,12 @@ public class DatabaseMigrationService {
                             'INVOICE_OVERDUE',
                             'CONTRACT_EXPIRING',
                             'CONTRACT_CREATED',
+                            'CONTRACT_ENDED',
                             'ELECTRICITY_CREATED',
                             'WATER_CREATED',
-                            'PAYMENT_RECORDED'
+                            'PAYMENT_RECORDED',
+                            'UTILITY_RATE_CHANGED',
+                            'UTILITY_CYCLE_FINALIZED'
                         )),
                         recipient_id BIGINT NOT NULL,
                         FOREIGN KEY (recipient_id) REFERENCES users(id)
@@ -105,7 +110,7 @@ public class DatabaseMigrationService {
                 stmt.execute("PRAGMA foreign_keys=ON;");
 
                 conn.commit();
-                log.info("Successfully migrated notifications table schema with all 11 NotificationType values.");
+                log.info("Successfully migrated notifications table schema with current NotificationType values.");
                 return true;
 
             } catch (Exception e) {
@@ -123,7 +128,7 @@ public class DatabaseMigrationService {
     }
 
     /**
-     * Determines whether the CREATE TABLE SQL of 'notifications' allows all 11 NotificationTypes.
+     * Determines whether the CREATE TABLE SQL of 'notifications' allows current NotificationTypes.
      */
     public boolean isSchemaUpToDate(String createTableSql) {
         if (createTableSql == null || createTableSql.trim().isEmpty()) {
@@ -134,10 +139,109 @@ public class DatabaseMigrationService {
         if (!uppercaseSql.contains("CHECK")) {
             return true;
         }
-        // If CHECK constraint exists, verify it contains the 3 new types (CONTRACT_CREATED, ELECTRICITY_CREATED, WATER_CREATED)
+        // Tables with a CHECK constraint must accept the newer notification types.
         return createTableSql.contains("CONTRACT_CREATED")
+                && createTableSql.contains("CONTRACT_ENDED")
                 && createTableSql.contains("ELECTRICITY_CREATED")
                 && createTableSql.contains("WATER_CREATED")
-                && createTableSql.contains("PAYMENT_RECORDED");
+                && createTableSql.contains("PAYMENT_RECORDED")
+                && createTableSql.contains("UTILITY_RATE_CHANGED")
+                && createTableSql.contains("UTILITY_CYCLE_FINALIZED");
     }
+    public void migratePaymentMethods() {
+        try(var conn=dataSource.getConnection(); var stmt=conn.createStatement()) {
+            String ddl;
+            try(var rs=stmt.executeQuery("SELECT sql FROM sqlite_master WHERE type='table' AND name='payments'")) {
+                if(!rs.next()) return;
+                ddl=rs.getString(1);
+            }
+            String updated=ddl.replaceAll("(?i)(payment_method\\s+in\\s*\\()([^)]*)(\\))", "$1$2,'UNSPECIFIED'$3");
+            if(ddl.contains("UNSPECIFIED") || updated.equals(ddl)) return;
+            boolean foreignKeys;
+            try(var rs=stmt.executeQuery("PRAGMA foreign_keys")) { foreignKeys=rs.next() && rs.getInt(1)!=0; }
+            stmt.execute("PRAGMA foreign_keys=OFF");
+            conn.setAutoCommit(false);
+            try {
+                var columns=new java.util.ArrayList<String>();
+                try(var rs=stmt.executeQuery("PRAGMA table_info(payments)")) {
+                    while(rs.next()) columns.add("\""+rs.getString("name")+"\"");
+                }
+                var definitions=new java.util.ArrayList<String>();
+                try(var rs=stmt.executeQuery("SELECT sql FROM sqlite_master WHERE tbl_name='payments' AND type IN ('index','trigger') AND sql IS NOT NULL")) {
+                    while(rs.next()) definitions.add(rs.getString(1));
+                }
+                stmt.execute("CREATE TABLE payments_method_migration "+updated.substring(updated.indexOf('(')));
+                String names=String.join(",",columns);
+                stmt.execute("INSERT INTO payments_method_migration ("+names+") SELECT "+names+" FROM payments");
+                stmt.execute("DROP TABLE payments");
+                stmt.execute("ALTER TABLE payments_method_migration RENAME TO payments");
+                for(var definition:definitions) stmt.execute(definition);
+                try(var rs=stmt.executeQuery("PRAGMA foreign_key_check")) {
+                    if(rs.next()) throw new IllegalStateException("Foreign key validation failed after payment migration");
+                }
+                conn.commit();
+            } catch(Exception e) { conn.rollback(); throw e; }
+            finally { conn.setAutoCommit(true); stmt.execute("PRAGMA foreign_keys="+(foreignKeys?"ON":"OFF")); }
+        } catch(Exception e) { throw new IllegalStateException("Không thể cập nhật phương thức thanh toán; dữ liệu được giữ nguyên.",e); }
+    }
+
+    public void migrateInvoiceCycleIndexes() {
+        try (Connection conn=dataSource.getConnection(); Statement stmt=conn.createStatement()) {
+            var columns=new java.util.ArrayList<String>();
+            try (var rs=stmt.executeQuery("PRAGMA table_info(invoices)")) {
+                while(rs.next()) columns.add(rs.getString("name"));
+            }
+            if (columns.isEmpty()) return; // A fresh database is created by Hibernate.
+            boolean foreignKeys;
+            try (var rs=stmt.executeQuery("PRAGMA foreign_keys")) { foreignKeys=rs.next() && rs.getInt(1)!=0; }
+            if (!conn.getAutoCommit()) throw new IllegalStateException("Migration requires its own transaction");
+            stmt.execute("PRAGMA foreign_keys=OFF");
+            conn.setAutoCommit(false);
+            try {
+                // SQLite cannot add a column with a UNIQUE constraint via Hibernate's
+                // schema update. Add nullable columns first, then create the indexes.
+                var cycleColumns = new java.util.LinkedHashMap<String, String>();
+                cycleColumns.put("utility_cycle_id", "BIGINT");
+                cycleColumns.put("period_start", "DATE");
+                cycleColumns.put("period_end", "DATE");
+                cycleColumns.put("note", "VARCHAR(255)");
+                cycleColumns.put("checkout_date", "DATE");
+                for (var column : cycleColumns.entrySet()) {
+                    if (!columns.contains(column.getKey())) {
+                        stmt.execute("ALTER TABLE invoices ADD COLUMN " + column.getKey() + " " + column.getValue());
+                        columns.add(column.getKey());
+                    }
+                }
+                String ddl;
+                try (var rs=stmt.executeQuery("SELECT sql FROM sqlite_master WHERE type='table' AND name='invoices'")) {
+                    if (!rs.next()) throw new IllegalStateException("Invoice table disappeared during migration");
+                    ddl=rs.getString(1);
+                }
+                String updated=ddl.replaceAll("(?i),?\\s*(?:constraint\\s+\\w+\\s+)?unique\\s*\\(\\s*room_id\\s*,\\s*billing_month\\s*,\\s*billing_year\\s*\\)", "");
+                stmt.execute("DROP INDEX IF EXISTS idx_invoice_room_period_unique");
+                stmt.execute("DROP INDEX IF EXISTS uk_invoice_room_period");
+                if (!ddl.equals(updated)) {
+                    var indexes=new java.util.ArrayList<String>();
+                    try (var rs=stmt.executeQuery("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='invoices' AND sql IS NOT NULL")) {
+                        while(rs.next()) indexes.add(rs.getString(1));
+                    }
+                    String create="CREATE TABLE invoices_cycle_migration " + updated.substring(updated.indexOf('('));
+                    stmt.execute(create);
+                    String cols=columns.stream().map(c -> "\""+c+"\"").collect(java.util.stream.Collectors.joining(","));
+                    stmt.execute("INSERT INTO invoices_cycle_migration ("+cols+") SELECT "+cols+" FROM invoices");
+                    stmt.execute("DROP TABLE invoices");
+                    stmt.execute("ALTER TABLE invoices_cycle_migration RENAME TO invoices");
+                    for (String index:indexes) stmt.execute(index);
+                }
+                stmt.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_legacy_period_unique ON invoices(room_id,billing_month,billing_year) WHERE utility_cycle_id IS NULL");
+                stmt.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_cycle_unique ON invoices(utility_cycle_id) WHERE utility_cycle_id IS NOT NULL");
+                try (var rs=stmt.executeQuery("PRAGMA foreign_key_check")) {
+                    if (rs.next()) throw new IllegalStateException("Foreign key validation failed after invoice migration");
+                }
+                conn.commit();
+            } catch(Exception e) { conn.rollback(); throw e; }
+            finally { conn.setAutoCommit(true); stmt.execute("PRAGMA foreign_keys="+(foreignKeys?"ON":"OFF")); }
+        } catch(Exception e) { throw new IllegalStateException("Không thể cập nhật cấu trúc kỳ hóa đơn; dữ liệu được giữ nguyên.",e); }
+    }
+
 }

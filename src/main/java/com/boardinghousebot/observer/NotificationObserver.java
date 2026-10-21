@@ -41,15 +41,20 @@ public class NotificationObserver {
         private final TelegramNotificationService telegramNotificationService;
         private final UserRepository userRepository;
         private final RoomService roomService;
+        private final com.boardinghousebot.service.RoomStayService roomStayService;
+        private final com.boardinghousebot.repository.InvoiceRepository invoiceRepository;
 
         public NotificationObserver(NotificationService notificationService,
                         TelegramNotificationService telegramNotificationService,
                         UserRepository userRepository,
-                        RoomService roomService) {
+                        RoomService roomService, com.boardinghousebot.service.RoomStayService roomStayService,
+                        com.boardinghousebot.repository.InvoiceRepository invoiceRepository) {
                 this.notificationService = notificationService;
                 this.telegramNotificationService = telegramNotificationService;
                 this.userRepository = userRepository;
                 this.roomService = roomService;
+                this.roomStayService = roomStayService;
+                this.invoiceRepository = invoiceRepository;
         }
 
         @EventListener
@@ -103,9 +108,8 @@ public class NotificationObserver {
                 log.info("Received MaintenanceCreatedEvent for Maintenance ID={}", req.getId());
 
                 String title = String.format("Yêu cầu bảo trì mới - Phòng %s", req.getRoom().getRoomNumber());
-                String dbMsg = String.format("🏠 Phòng: %s\n📌 Tiêu đề: %s\n📝 Mô tả: %s\n👤 Người báo: %s",
+                String dbMsg = String.format("🏠 Phòng: %s\n📝 Mô tả: %s\n👤 Người báo: %s",
                                 req.getRoom().getRoomNumber(),
-                                req.getTitle(),
                                 req.getDescription() != null && !req.getDescription().isBlank() ? req.getDescription()
                                                 : req.getTitle(),
                                 req.getMember().getFullName() != null ? req.getMember().getFullName()
@@ -122,20 +126,16 @@ public class NotificationObserver {
                                 Phòng: %s
                                 Người báo: %s
 
-                                Sự cố:
-                                %s
-
                                 Mô tả sự cố:
                                 %s
 
                                 Thời gian: %s
 
-                                Trạng thái: PENDING
+                                Trạng thái: Cần xử lý
                                 """,
                                 req.getRoom().getRoomNumber(),
                                 req.getMember().getFullName() != null ? req.getMember().getFullName()
                                                 : "User " + req.getMember().getTelegramId(),
-                                req.getTitle(),
                                 descriptionContent,
                                 createdTime).trim();
 
@@ -172,10 +172,6 @@ public class NotificationObserver {
                                 req.getRoom().getRoomNumber(), req.getTitle(), newStatus.getIcon(),
                                 newStatus.getDisplayName()));
 
-                if (req.getLandlordNote() != null && !req.getLandlordNote().isBlank()) {
-                        dbSb.append("\n📝 Ghi chú từ chủ trọ:\n").append(req.getLandlordNote());
-                }
-
                 notificationService.createNotification(
                                 req.getMember().getTelegramId(),
                                 NotificationType.MAINTENANCE_STATUS_CHANGED,
@@ -185,9 +181,6 @@ public class NotificationObserver {
                                 req.getId());
 
                 String telegramMsg;
-                String noteText = (req.getLandlordNote() != null && !req.getLandlordNote().isBlank())
-                                ? req.getLandlordNote()
-                                : "Không có";
 
                 if (newStatus == MaintenanceStatus.RESOLVED) {
                         telegramMsg = String.format("""
@@ -199,14 +192,11 @@ public class NotificationObserver {
                                         %s
 
                                         Trạng thái:
-                                        RESOLVED
+                                        Đã xử lý
 
-                                        Ghi chú:
-                                        %s
                                         """,
                                         req.getRoom().getRoomNumber(),
-                                        req.getTitle(),
-                                        noteText).trim();
+                                        req.getTitle()).trim();
                 } else {
                         telegramMsg = String.format("""
                                         🔧 CẬP NHẬT SỰ CỐ
@@ -219,14 +209,11 @@ public class NotificationObserver {
                                         Trạng thái:
                                         %s → %s
 
-                                        Ghi chú:
-                                        %s
                                         """,
                                         req.getRoom().getRoomNumber(),
                                         req.getTitle(),
                                         oldStatus.name(),
-                                        newStatus.name(),
-                                        noteText).trim();
+                                        newStatus.name()).trim();
                 }
 
                 telegramNotificationService.sendNotification(req.getMember().getTelegramId(), telegramMsg);
@@ -373,6 +360,40 @@ public class NotificationObserver {
         }
 
         @EventListener
+        public void handleContractEnded(ContractEndedEvent event) {
+                Contract contract = event.contract();
+                Room room = contract.getRoom();
+                if (room == null) return;
+
+                List<User> members = userRepository.findByRoomId(room.getId()).stream()
+                                .filter(user -> user.getRole() == Role.MEMBER)
+                                .toList();
+                String title = "Hợp đồng đã kết thúc - Phòng " + room.getRoomNumber();
+                for (User member : members) {
+                        boolean representative = contract.getMember() != null
+                                        && member.getTelegramId().equals(contract.getMember().getTelegramId());
+                        String message = "📄 HỢP ĐỒNG ĐÃ KẾT THÚC\n\n"
+                                        + "🏠 Phòng: " + room.getRoomNumber() + "\n"
+                                        + "Chủ trọ đã kết thúc hợp đồng của phòng bạn.\n\n";
+                        if (representative) {
+                                DateTimeFormatter dateFormat = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+                                message += "Bạn là người đại diện đứng tên hợp đồng.\n"
+                                                + "📅 Thời hạn đã thỏa thuận: " + contract.getStartDate().format(dateFormat)
+                                                + " → " + contract.getEndDate().format(dateFormat) + "\n"
+                                                + "💰 Tiền thuê: " + CURRENCY_FORMAT.format(contract.getMonthlyRent()) + " VNĐ/tháng\n"
+                                                + "💵 Tiền cọc theo hợp đồng: " + CURRENCY_FORMAT.format(contract.getDeposit()) + " VNĐ\n\n"
+                                                + "Vui lòng liên hệ chủ trọ để trao đổi việc xử lý tiền cọc và bàn giao phòng.";
+                        } else {
+                                message += "Vui lòng liên hệ người đại diện đứng tên hợp đồng hoặc chủ trọ để được hướng dẫn các bước tiếp theo.";
+                        }
+                        message += "\n\nThông tin liên hệ chủ trọ có trong /menu → 📞 Thông tin liên hệ chủ trọ.";
+                        notificationService.createNotification(member.getTelegramId(), NotificationType.CONTRACT_ENDED,
+                                        title, message, "CONTRACT", contract.getId());
+                        telegramNotificationService.sendNotification(member.getTelegramId(), message);
+                }
+        }
+
+        @EventListener
         public void handleMeterReadingCreated(MeterReadingCreatedEvent event) {
                 MeterReading reading = event.getReading();
                 Room room = reading.getRoom();
@@ -380,8 +401,9 @@ public class NotificationObserver {
 
                 log.info("Received MeterReadingCreatedEvent for Reading ID={}, Type={}, Room={}", reading.getId(), reading.getUtilityType(), room.getRoomNumber());
 
-                List<User> members = userRepository.findByRoomId(room.getId()).stream()
+                List<User> members = userRepository.findByRole(Role.MEMBER).stream()
                                 .filter(u -> u.getRole() == Role.MEMBER)
+                                .filter(u -> roomStayService.canReadPeriod(u, room.getId(), reading.getBillingMonth(), reading.getBillingYear(), reading.getCreatedAt()))
                                 .toList();
 
                 if (members.isEmpty()) return;
@@ -442,8 +464,9 @@ public class NotificationObserver {
 
                 log.info("Received InvoiceCreatedEvent for Invoice ID={}, Room={}", invoice.getId(), room.getRoomNumber());
 
-                List<User> members = userRepository.findByRoomId(room.getId()).stream()
+                List<User> members = userRepository.findByRole(Role.MEMBER).stream()
                                 .filter(u -> u.getRole() == Role.MEMBER)
+                                .filter(u -> roomStayService.canReadInvoice(u, invoice))
                                 .toList();
 
                 if (members.isEmpty()) return;
@@ -497,17 +520,12 @@ public class NotificationObserver {
                 if (payment == null) return;
 
                 List<Long> recipientIds = event.getRecipientTelegramIds();
-                if ((recipientIds == null || recipientIds.isEmpty()) && event.getRoom() != null && event.getRoom().getId() != null) {
-                        try {
-                                recipientIds = userRepository.findByRoomId(event.getRoom().getId()).stream()
-                                                .filter(u -> u.getRole() == Role.MEMBER)
-                                                .map(User::getTelegramId)
-                                                .toList();
-                        } catch (Exception ignored) {
-                        }
-                }
-
                 if (recipientIds == null || recipientIds.isEmpty()) return;
+                var authorizedInvoice = invoiceRepository.findByIdWithDetails(event.getInvoice().getId());
+                if (authorizedInvoice.isEmpty()) return;
+                recipientIds = recipientIds.stream().filter(id -> userRepository.findByTelegramId(id)
+                        .filter(u -> u.getRole() == Role.MEMBER)
+                        .filter(u -> roomStayService.canReadInvoice(u, authorizedInvoice.get())).isPresent()).toList();
 
                 String roomNum = event.getRoomNumber() != null ? event.getRoomNumber()
                                 : (event.getRoom() != null ? event.getRoom().getRoomNumber() : "N/A");

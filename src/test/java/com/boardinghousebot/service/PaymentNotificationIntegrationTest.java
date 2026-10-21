@@ -62,6 +62,8 @@ class PaymentNotificationIntegrationTest {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired private ContractRepository contractRepository;
+
     @Autowired
     private ApplicationEventPublisher eventPublisher;
 
@@ -75,6 +77,12 @@ class PaymentNotificationIntegrationTest {
     private Room room101;
     private Room room102;
     private Invoice invoice101;
+    private Long rentalContractId;
+
+    @org.junit.jupiter.api.AfterEach
+    void removeRentalFixture() {
+        if (rentalContractId != null) contractRepository.deleteById(rentalContractId);
+    }
 
     private static final Long LANDLORD_A_ID = 888111222L;
     private static final Long LANDLORD_B_ID = 888333444L;
@@ -88,6 +96,7 @@ class PaymentNotificationIntegrationTest {
         notificationRepository.deleteAll();
         paymentRepository.deleteAll();
         invoiceRepository.deleteAll();
+        contractRepository.deleteAll();
         userRepository.deleteAll();
         roomRepository.deleteAll();
 
@@ -121,13 +130,15 @@ class PaymentNotificationIntegrationTest {
         roomService.assignMemberToRoom(LANDLORD_A_ID, MEMBER1_ID, room101.getId());
         roomService.assignMemberToRoom(LANDLORD_A_ID, MEMBER2_ID, room101.getId());
         roomService.assignMemberToRoom(LANDLORD_A_ID, OTHER_MEMBER_ID, room102.getId());
+        rentalContractId = contractRepository.save(new com.boardinghousebot.domain.contract.Contract(member1, room101,
+                LocalDate.now().minusMonths(1), LocalDate.now().plusMonths(6), new BigDecimal("3000000"), BigDecimal.ZERO)).getId();
 
         invoice101 = new Invoice(
                 room101,
                 member1,
                 null,
-                9,
-                2026,
+                LocalDate.now().getMonthValue(),
+                LocalDate.now().getYear(),
                 new BigDecimal("3000000"),
                 new BigDecimal("350000"),
                 new BigDecimal("150000"),

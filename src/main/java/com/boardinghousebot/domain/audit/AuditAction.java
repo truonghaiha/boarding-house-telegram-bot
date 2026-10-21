@@ -1,8 +1,11 @@
 package com.boardinghousebot.domain.audit;
 
 public final class AuditAction {
+    public static final String LANDLORD_UPDATE_TENANT_CONTACT = "LANDLORD_UPDATE_TENANT_CONTACT";
 
     public static final String USER_REGISTER = "USER_REGISTER";
+    public static final String CONFIG_GRANT_ADMIN = "CONFIG_GRANT_ADMIN";
+    public static final String CONFIG_REVOKE_ADMIN = "CONFIG_REVOKE_ADMIN";
     public static final String ADMIN_PROMOTE_LANDLORD = "ADMIN_PROMOTE_LANDLORD";
     public static final String ADMIN_REVOKE_LANDLORD = "ADMIN_REVOKE_LANDLORD";
 

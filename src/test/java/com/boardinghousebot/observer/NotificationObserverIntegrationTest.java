@@ -64,6 +64,9 @@ class NotificationObserverIntegrationTest {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private RoomStayRepository roomStayRepository;
+
     private User adminLandlord;
     private User member;
     private Room room;
@@ -73,6 +76,7 @@ class NotificationObserverIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        roomStayRepository.deleteAll();
         notificationRepository.deleteAll();
         maintenanceRequestRepository.deleteAll();
         contractRepository.deleteAll();
@@ -124,7 +128,7 @@ class NotificationObserverIntegrationTest {
         Notification notif = landlordNotifications.get(0);
         assertEquals(NotificationType.MAINTENANCE_CREATED, notif.getType());
         assertTrue(notif.getTitle().contains("201"));
-        assertTrue(notif.getMessage().contains("Hỏng công tắc đèn"));
+        assertTrue(notif.getMessage().contains("Công tắc bị ngắt mạch không bật được"));
         assertEquals("MAINTENANCE", notif.getReferenceType());
         assertEquals(req.getId(), notif.getReferenceId());
     }
@@ -157,7 +161,8 @@ class NotificationObserverIntegrationTest {
 
         Notification notif = memberNotifications.get(0);
         assertEquals(NotificationType.MAINTENANCE_STATUS_CHANGED, notif.getType());
-        assertTrue(notif.getMessage().contains("Đã hẹn thợ 15h"));
+        assertTrue(notif.getMessage().contains("Cần xử lý"));
+        assertFalse(notif.getMessage().contains("Ghi chú"));
         assertEquals("MAINTENANCE", notif.getReferenceType());
         assertEquals(req.getId(), notif.getReferenceId());
     }

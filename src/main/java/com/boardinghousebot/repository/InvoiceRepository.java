@@ -12,6 +12,9 @@ import java.util.Optional;
 
 @Repository
 public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
+    Optional<Invoice> findByUtilityCycleId(Long cycleId);
+    boolean existsByUtilityCycleId(Long cycleId);
+    List<Invoice> findByContractId(Long contractId);
 
     @Query("SELECT i FROM Invoice i LEFT JOIN FETCH i.room r LEFT JOIN FETCH i.member m LEFT JOIN FETCH i.contract c WHERE i.id = :id")
     Optional<Invoice> findByIdWithDetails(@Param("id") Long id);
@@ -41,7 +44,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
     @Query("SELECT DISTINCT i.billingYear, i.billingMonth FROM Invoice i ORDER BY i.billingYear DESC, i.billingMonth DESC")
     List<Object[]> findDistinctBillingPeriods();
 
-    @Query("SELECT i FROM Invoice i LEFT JOIN FETCH i.room r LEFT JOIN FETCH i.member m WHERE r.id = :roomId AND i.billingMonth = :month AND i.billingYear = :year")
+    @Query("SELECT i FROM Invoice i LEFT JOIN FETCH i.room r LEFT JOIN FETCH i.member m WHERE r.id = :roomId AND i.billingMonth = :month AND i.billingYear = :year AND i.utilityCycleId IS NULL")
     Optional<Invoice> findByRoomIdAndBillingMonthAndBillingYear(
             @Param("roomId") Long roomId,
             @Param("month") Integer month,
@@ -49,6 +52,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
     );
 
     boolean existsByRoomIdAndBillingMonthAndBillingYear(Long roomId, Integer month, Integer year);
+    boolean existsByMemberTelegramId(Long memberTelegramId);
 
     @Query("SELECT i FROM Invoice i LEFT JOIN FETCH i.room r LEFT JOIN FETCH i.member m WHERE i.dueDate = :dueDate AND i.status != 'PAID'")
     List<Invoice> findInvoicesDueOn(@Param("dueDate") java.time.LocalDate dueDate);

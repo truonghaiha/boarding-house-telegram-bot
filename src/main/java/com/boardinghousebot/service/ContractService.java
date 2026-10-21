@@ -21,32 +21,50 @@ import java.util.Optional;
 
 import org.springframework.context.ApplicationEventPublisher;
 import com.boardinghousebot.observer.ContractCreatedEvent;
+import com.boardinghousebot.observer.ContractEndedEvent;
 
 @Service
 public class ContractService {
 
     private static final Logger log = LoggerFactory.getLogger(ContractService.class);
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.boardinghousebot.repository.UtilityCycleRepository utilityCycles;
+
     private final ContractRepository contractRepository;
     private final UserRepository userRepository;
     private final AuthorizationService authorizationService;
     private final AuditLogService auditLogService;
     private final ApplicationEventPublisher eventPublisher;
+    private final RoomStayService roomStayService;
+    private final RoomService roomService;
+    private final NotificationService notificationService;
 
     public ContractService(ContractRepository contractRepository,
                            UserRepository userRepository,
                            AuthorizationService authorizationService,
                            AuditLogService auditLogService,
-                           ApplicationEventPublisher eventPublisher) {
+                           ApplicationEventPublisher eventPublisher,
+                           RoomStayService roomStayService,
+                           RoomService roomService,
+                           NotificationService notificationService) {
         this.contractRepository = contractRepository;
         this.userRepository = userRepository;
         this.authorizationService = authorizationService;
         this.auditLogService = auditLogService;
         this.eventPublisher = eventPublisher;
+        this.roomStayService = roomStayService;
+        this.roomService = roomService;
+        this.notificationService = notificationService;
     }
 
     @Transactional
     public Contract createContract(Long landlordTelegramId, Long memberTelegramId, LocalDate startDate, LocalDate endDate, BigDecimal monthlyRent, BigDecimal deposit) {
+        return createContract(landlordTelegramId, memberTelegramId, startDate, endDate, monthlyRent, deposit, null);
+    }
+
+    @Transactional
+    public Contract createContract(Long landlordTelegramId, Long memberTelegramId, LocalDate startDate, LocalDate endDate, BigDecimal monthlyRent, BigDecimal deposit, Long expectedRoomId) {
         User landlord = userRepository.findByTelegramId(landlordTelegramId)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy người dùng."));
         authorizationService.requireLandlord(landlord);
@@ -61,6 +79,9 @@ public class ContractService {
         Room room = member.getRoom();
         if (room == null) {
             throw new BusinessException("Người thuê chưa được xếp vào phòng nào.");
+        }
+        if (expectedRoomId != null && !expectedRoomId.equals(room.getId())) {
+            throw new BusinessException("Người thuê không còn ở phòng đã chọn. Vui lòng tạo lại hợp đồng.");
         }
 
         if (contractRepository.existsByMemberTelegramIdAndStatus(memberTelegramId, ContractStatus.ACTIVE)) {
@@ -80,6 +101,8 @@ public class ContractService {
                 "Landlord " + landlordTelegramId + " tạo hợp đồng cho member " + memberTelegramId + " ở phòng " + room.getRoomNumber());
         log.info("Created contract ID={} for Member {} in Room {}", savedContract.getId(), memberTelegramId, room.getRoomNumber());
 
+        userRepository.findByRoomId(room.getId()).stream().filter(user -> user.getRole() == Role.MEMBER)
+                .forEach(user -> notificationService.clearNotificationsForUser(user.getTelegramId()));
         eventPublisher.publishEvent(new ContractCreatedEvent(savedContract));
 
         return savedContract;
@@ -100,6 +123,22 @@ public class ContractService {
 
         validateContractInputs(newStartDate, newEndDate, newMonthlyRent, newDeposit);
 
+        if(utilityCycles!=null) {
+            for(var cycle:utilityCycles.findByContractIdOrderByIdDesc(contractId)) {
+                if(cycle.isFinalized()) continue;
+                if(cycle.isBaseline()) {
+                    cycle.setPeriodStart(newStartDate); cycle.setPeriodEnd(newStartDate); cycle.setPlannedEnd(newStartDate);
+                    cycle.setReadingDate(newStartDate);
+                } else if(!cycle.isAdjusted()) {
+                    if(cycle.getPeriodStart().isBefore(newStartDate) || !newEndDate.isAfter(cycle.getPeriodStart()))
+                        throw new BusinessException("Ngày mới mâu thuẫn với kỳ điện nước đang nhập. Vui lòng kiểm tra mốc chỉ số trước.");
+                    var end=com.boardinghousebot.util.BillingDates.next(newStartDate,cycle.getPeriodStart());
+                    if(newEndDate.isBefore(end)) end=newEndDate;
+                    cycle.setPeriodEnd(end); cycle.setPlannedEnd(end); cycle.setRent(newMonthlyRent);
+                }
+                utilityCycles.save(cycle);
+            }
+        }
         contract.setStartDate(newStartDate);
         contract.setEndDate(newEndDate);
         contract.setMonthlyRent(newMonthlyRent);
@@ -134,12 +173,28 @@ public class ContractService {
                 "Landlord " + landlordTelegramId + " kết thúc hợp đồng ID " + contractId);
         log.info("Ended contract ID={}", contractId);
 
+        eventPublisher.publishEvent(new ContractEndedEvent(savedContract));
+
+        // Notify the current residents before closing their residence records.
+        var residents = userRepository.findByRoomId(contract.getRoom().getId()).stream()
+                .filter(user -> user.getRole() == Role.MEMBER).toList();
+        for (var resident : residents) {
+            roomService.removeMemberFromRoom(landlordTelegramId, resident.getTelegramId(), contract.getRoom().getId());
+            notificationService.clearNotificationsForUser(resident.getTelegramId());
+        }
+        notificationService.clearNotificationsForUser(contract.getMember().getTelegramId());
+
         return savedContract;
     }
 
     @Transactional(readOnly = true)
     public List<Contract> getAllContracts() {
         return contractRepository.findAllWithDetails();
+    }
+
+    @Transactional(readOnly = true)
+    public boolean hasActiveContractForRoom(Long roomId) {
+        return contractRepository.existsByRoomIdAndStatus(roomId, ContractStatus.ACTIVE);
     }
 
     @Transactional(readOnly = true)
@@ -156,6 +211,29 @@ public class ContractService {
     public Contract getContractById(Long contractId) {
         return contractRepository.findByIdWithDetails(contractId)
                 .orElseThrow(() -> new BusinessException("Không tìm thấy hợp đồng."));
+    }
+
+    @Transactional(readOnly = true)
+    public Contract getContractForUser(User viewer, Long contractId) {
+        Contract contract = getContractById(contractId);
+        if (viewer.getRole() != Role.LANDLORD) {
+            authorizationService.requireMember(viewer);
+            boolean ownHistory = contract.getStatus() == ContractStatus.ENDED
+                    && viewer.getTelegramId().equals(contract.getMember().getTelegramId());
+            boolean currentRoomContract = contract.getStatus() == ContractStatus.ACTIVE
+                    && roomStayService.getCurrentRoom(viewer.getTelegramId())
+                    .filter(room -> room.getId().equals(contract.getRoom().getId())).isPresent();
+            if (!ownHistory && !currentRoomContract) {
+                throw new BusinessException("Bạn không có quyền xem hợp đồng này.");
+            }
+        }
+        return contract;
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<Contract> getCurrentRoomActiveContract(Long memberTelegramId) {
+        return roomStayService.getCurrentRoom(memberTelegramId)
+                .flatMap(room -> contractRepository.findActiveContractByRoomId(room.getId()));
     }
 
     @Transactional(readOnly = true)

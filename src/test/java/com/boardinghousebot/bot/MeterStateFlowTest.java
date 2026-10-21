@@ -45,6 +45,8 @@ class MeterStateFlowTest {
     @Autowired
     private RoomRepository roomRepository;
 
+    @Autowired private com.boardinghousebot.repository.UtilityRateRepository utilityRates;
+
     private User landlordUser;
     private Room room103;
     private BotMessageSender mockMessageSender;
@@ -111,17 +113,14 @@ class MeterStateFlowTest {
         meterCommandHandler.handle(createMessageUpdate("1100"), landlordUser, mockMessageSender);
         assertEquals(UserConversationState.Step.CREATE_METER_CURRENT, stateService.getState(telegramId).getStep());
 
-        // 7. Input valid current reading (1350) -> step should change to CREATE_METER_UNIT_PRICE
+        utilityRates.save(new com.boardinghousebot.domain.meter.UtilityRate(
+                com.boardinghousebot.domain.meter.UtilityType.ELECTRICITY, new BigDecimal("3500"),
+                java.time.LocalDate.of(2026, 9, 1)));
+        // Common rate is selected automatically, with no unit-price input.
         meterCommandHandler.handle(createMessageUpdate("1350"), landlordUser, mockMessageSender);
-        assertEquals(UserConversationState.Step.CREATE_METER_UNIT_PRICE, stateService.getState(telegramId).getStep());
-
-        // 8. Input unit price <= 0 -> step should remain CREATE_METER_UNIT_PRICE
-        meterCommandHandler.handle(createMessageUpdate("0"), landlordUser, mockMessageSender);
-        assertEquals(UserConversationState.Step.CREATE_METER_UNIT_PRICE, stateService.getState(telegramId).getStep());
-
-        // 9. Input valid unit price (3500) -> step should change to CREATE_METER_CONFIRM
-        meterCommandHandler.handle(createMessageUpdate("3500"), landlordUser, mockMessageSender);
         assertEquals(UserConversationState.Step.CREATE_METER_CONFIRM, stateService.getState(telegramId).getStep());
+        assertEquals(0, new BigDecimal("3500").compareTo(
+                (BigDecimal) stateService.getState(telegramId).getData().get("unitPrice")));
     }
 
     @Test

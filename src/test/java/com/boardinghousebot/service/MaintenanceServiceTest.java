@@ -11,7 +11,6 @@ import com.boardinghousebot.exception.BusinessException;
 import com.boardinghousebot.observer.MaintenanceCreatedEvent;
 import com.boardinghousebot.observer.MaintenanceStatusChangedEvent;
 import com.boardinghousebot.repository.AuditLogRepository;
-import com.boardinghousebot.repository.ContractRepository;
 import com.boardinghousebot.repository.MaintenanceRequestRepository;
 import com.boardinghousebot.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,7 +39,7 @@ class MaintenanceServiceTest {
     private UserRepository userRepository;
 
     @Mock
-    private ContractRepository contractRepository;
+    private RoomStayService roomStayService;
 
     @Mock
     private AuditLogRepository auditLogRepository;
@@ -60,12 +59,12 @@ class MaintenanceServiceTest {
 
     @BeforeEach
     void setUp() {
-        authorizationService = new AuthorizationService();
+        authorizationService = new AuthorizationService(new com.boardinghousebot.config.TelegramConfig());
         auditLogService = new AuditLogService(auditLogRepository);
         maintenanceService = new MaintenanceService(
                 maintenanceRequestRepository,
                 userRepository,
-                contractRepository,
+                roomStayService,
                 authorizationService,
                 auditLogService,
                 eventPublisher
@@ -84,7 +83,7 @@ class MaintenanceServiceTest {
     @DisplayName("createMaintenanceRequest successfully creates request and publishes event")
     void createMaintenanceRequest_Success() {
         when(userRepository.findByTelegramId(100L)).thenReturn(Optional.of(member));
-        when(contractRepository.findActiveContractByMemberTelegramId(100L)).thenReturn(Optional.of(activeContract));
+        when(roomStayService.getCurrentRoom(100L)).thenReturn(Optional.of(room));
         when(maintenanceRequestRepository.save(any(MaintenanceRequest.class))).thenAnswer(i -> i.getArgument(0));
 
         MaintenanceRequest result = maintenanceService.createMaintenanceRequest(100L, " Hỏng quạt ", " Quạt trần kêu to ");
@@ -103,7 +102,7 @@ class MaintenanceServiceTest {
     void createMaintenanceRequest_NoRoom_ThrowsException() {
         member.setRoom(null);
         when(userRepository.findByTelegramId(100L)).thenReturn(Optional.of(member));
-        when(contractRepository.findActiveContractByMemberTelegramId(100L)).thenReturn(Optional.empty());
+        when(roomStayService.getCurrentRoom(100L)).thenReturn(Optional.empty());
 
         BusinessException ex = assertThrows(BusinessException.class, () ->
                 maintenanceService.createMaintenanceRequest(100L, "Hỏng điện", "Mô tả"));

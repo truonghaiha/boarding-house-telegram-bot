@@ -53,6 +53,9 @@ class ContractServiceTest {
     @Autowired
     private TelegramConfig telegramConfig;
 
+    @Autowired
+    private com.boardinghousebot.repository.RoomStayRepository roomStayRepository;
+
     private User landlord;
     private User admin;
     private User member1;
@@ -107,6 +110,26 @@ class ContractServiceTest {
         assertEquals(ContractStatus.ACTIVE, contract.getStatus());
         assertEquals("101", contract.getRoom().getRoomNumber());
         assertEquals(member1.getTelegramId(), contract.getMember().getTelegramId());
+    }
+
+    @Test
+    void rejectsResidentWhoMovedFromSelectedRoomBeforeConfirmation() {
+        roomService.moveMemberToRoom(LANDLORD_ID, MEMBER1_ID, room102.getId());
+        BusinessException ex = assertThrows(BusinessException.class, () ->
+                contractService.createContract(LANDLORD_ID, MEMBER1_ID, LocalDate.now(),
+                        LocalDate.now().plusYears(1), new BigDecimal("3500000"), BigDecimal.ZERO, room101.getId()));
+        assertEquals("Người thuê không còn ở phòng đã chọn. Vui lòng tạo lại hợp đồng.", ex.getMessage());
+        assertEquals(0, contractRepository.count());
+    }
+
+    @Test
+    void selectedRoomContractCanBeCreatedAndRoomBecomesIneligible() {
+        assertFalse(contractService.hasActiveContractForRoom(room101.getId()));
+        Contract contract = contractService.createContract(LANDLORD_ID, MEMBER1_ID, LocalDate.now(),
+                LocalDate.now().plusYears(1), new BigDecimal("3500000"), BigDecimal.ZERO, room101.getId());
+        assertEquals(room101.getId(), contract.getRoom().getId());
+        assertTrue(contractService.hasActiveContractForRoom(room101.getId()));
+        assertFalse(contractService.hasActiveContractForRoom(room102.getId()));
     }
 
     @Test
@@ -223,12 +246,27 @@ class ContractServiceTest {
         LocalDate start = LocalDate.now();
         LocalDate end = start.plusYears(1);
         Contract contract = contractService.createContract(landlord.getTelegramId(), member1.getTelegramId(), start, end, new BigDecimal("3500000"), new BigDecimal("3500000"));
+        roomService.assignMemberToRoom(landlord.getTelegramId(), memberNoRoom.getTelegramId(), room101.getId());
 
         Contract ended = contractService.endContract(landlord.getTelegramId(), contract.getId());
         assertEquals(ContractStatus.ENDED, ended.getStatus());
 
         Contract fromDb = contractService.getContractById(contract.getId());
         assertEquals(ContractStatus.ENDED, fromDb.getStatus());
+        assertEquals(room101.getId(), fromDb.getRoom().getId());
+        assertEquals(member1.getTelegramId(), fromDb.getMember().getTelegramId());
+        for (var resident : List.of(member1, memberNoRoom)) {
+            assertNull(userRepository.findByTelegramId(resident.getTelegramId()).orElseThrow().getRoom());
+            assertTrue(roomStayRepository.findByMemberTelegramIdAndLeftAtIsNull(resident.getTelegramId()).isEmpty());
+            assertFalse(roomStayRepository.findByMemberTelegramIdAndRoomId(resident.getTelegramId(), room101.getId()).isEmpty());
+        }
+        assertEquals(0, roomService.getCurrentOccupantCount(room101.getId()));
+        assertEquals(com.boardinghousebot.domain.room.RoomStatus.AVAILABLE, roomService.getRoomById(room101.getId()).getStatus());
+        assertEquals(room102.getId(), member2.getRoom().getId());
+
+        roomService.assignMemberToRoom(landlord.getTelegramId(), memberNoRoom.getTelegramId(), room101.getId());
+        assertThrows(BusinessException.class, () -> contractService.endContract(landlord.getTelegramId(), contract.getId()));
+        assertEquals(room101.getId(), memberNoRoom.getRoom().getId());
     }
 
     @Test

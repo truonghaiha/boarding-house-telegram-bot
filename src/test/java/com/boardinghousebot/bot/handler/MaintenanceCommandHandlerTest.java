@@ -7,7 +7,7 @@ import com.boardinghousebot.domain.room.Room;
 import com.boardinghousebot.domain.user.Role;
 import com.boardinghousebot.domain.user.User;
 import com.boardinghousebot.repository.AuditLogRepository;
-import com.boardinghousebot.repository.ContractRepository;
+import com.boardinghousebot.service.RoomStayService;
 import com.boardinghousebot.repository.MaintenanceRequestRepository;
 import com.boardinghousebot.repository.UserRepository;
 import com.boardinghousebot.service.AuditLogService;
@@ -44,7 +44,7 @@ class MaintenanceCommandHandlerTest {
     private UserRepository userRepository;
 
     @Mock
-    private ContractRepository contractRepository;
+    private RoomStayService roomStayService;
 
     @Mock
     private AuditLogRepository auditLogRepository;
@@ -68,12 +68,12 @@ class MaintenanceCommandHandlerTest {
 
     @BeforeEach
     void setUp() {
-        authorizationService = new AuthorizationService();
+        authorizationService = new AuthorizationService(new com.boardinghousebot.config.TelegramConfig());
         auditLogService = new AuditLogService(auditLogRepository);
         maintenanceService = new MaintenanceService(
                 maintenanceRequestRepository,
                 userRepository,
-                contractRepository,
+                roomStayService,
                 authorizationService,
                 auditLogService,
                 eventPublisher
@@ -98,7 +98,11 @@ class MaintenanceCommandHandlerTest {
         maintenanceCommandHandler.handle(update, member, messageSender);
 
         assertEquals(UserConversationState.Step.NONE, stateService.getState(100L).getStep());
-        verify(messageSender).sendMessageWithKeyboard(eq(100L), contains("Đã hủy thao tác báo cáo sự cố"), any());
+        verify(messageSender).sendMessageWithKeyboard(eq(100L), contains("Đã hủy thao tác báo cáo sự cố"), argThat(keyboard ->
+                keyboard.getKeyboard().stream().flatMap(java.util.Collection::stream)
+                        .anyMatch(button -> "MEMBER_MAINTENANCE".equals(button.getCallbackData()))
+                && keyboard.getKeyboard().stream().flatMap(java.util.Collection::stream)
+                        .noneMatch(button -> "MAINTENANCE_LIST_MEMBER".equals(button.getCallbackData()))));
     }
 
     @Test
@@ -117,18 +121,21 @@ class MaintenanceCommandHandlerTest {
     @DisplayName("Member complete reporting wizard flow")
     void memberCreateMaintenanceWizard_Success() {
         // Step 1: Start wizard
-        Update update1 = createMessageUpdate("MAINTENANCE_ADD", 100L);
+        Update update1 = new Update();
+        var callback = new org.telegram.telegrambots.meta.api.objects.CallbackQuery();
+        var menuMessage = new Message();
+        menuMessage.setChat(new Chat(100L, "private"));
+        callback.setMessage(menuMessage);
+        callback.setData("MEMBER_MAINTENANCE");
+        update1.setCallbackQuery(callback);
         maintenanceCommandHandler.handle(update1, member, messageSender);
-        assertEquals(UserConversationState.Step.CREATE_MAINTENANCE_TITLE, stateService.getState(100L).getStep());
-
-        // Step 2: Enter title
-        Update update2 = createMessageUpdate("Hỏng công tắc điện", 100L);
-        maintenanceCommandHandler.handle(update2, member, messageSender);
         assertEquals(UserConversationState.Step.CREATE_MAINTENANCE_DESC, stateService.getState(100L).getStep());
+        verify(messageSender).sendPrompt(eq(100L), contains("Nhập chi tiết mô tả sự cố:"));
+        verify(messageSender, never()).sendMessageWithKeyboard(anyLong(), anyString(), any());
 
-        // Step 3: Enter description
+        // One message describes the whole issue and submits the report.
         when(userRepository.findByTelegramId(100L)).thenReturn(Optional.of(member));
-        when(contractRepository.findActiveContractByMemberTelegramId(100L)).thenReturn(Optional.of(activeContract));
+        when(roomStayService.getCurrentRoom(100L)).thenReturn(Optional.of(room));
         when(maintenanceRequestRepository.save(any(MaintenanceRequest.class))).thenAnswer(i -> {
             MaintenanceRequest req = i.getArgument(0);
             req.setId(1L);
@@ -139,7 +146,15 @@ class MaintenanceCommandHandlerTest {
         maintenanceCommandHandler.handle(update3, member, messageSender);
 
         assertEquals(UserConversationState.Step.NONE, stateService.getState(100L).getStep());
-        verify(messageSender).sendMessageWithKeyboard(eq(100L), contains("Đã gửi báo cáo sự cố thành công"), any());
+        verify(maintenanceRequestRepository).save(argThat(request ->
+                "Không bật được đèn".equals(request.getDescription())
+                && "Không bật được đèn".equals(request.getTitle())));
+        verify(messageSender, times(1)).sendPrompt(anyLong(), anyString());
+        verify(messageSender).sendResultAndMenu(eq(100L), contains("Đã gửi báo cáo sự cố thành công"), argThat(keyboard ->
+                keyboard.getKeyboard().stream().flatMap(java.util.Collection::stream)
+                        .anyMatch(button -> "MEMBER_MAINTENANCE".equals(button.getCallbackData()))
+                && keyboard.getKeyboard().stream().flatMap(java.util.Collection::stream)
+                        .noneMatch(button -> "MAINTENANCE_LIST_MEMBER".equals(button.getCallbackData()))));
     }
 
     private Update createMessageUpdate(String text, Long chatId) {

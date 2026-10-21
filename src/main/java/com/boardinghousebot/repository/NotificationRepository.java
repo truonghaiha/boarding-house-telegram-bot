@@ -12,6 +12,10 @@ import java.util.List;
 @Repository
 public interface NotificationRepository extends JpaRepository<Notification, Long> {
 
+    long deleteByRecipientTelegramId(Long telegramId);
+
+    List<Notification> findByRecipientTelegramIdAndIsReadTrueOrderByCreatedAtDesc(Long telegramId);
+
     @Query("SELECT n FROM Notification n LEFT JOIN FETCH n.recipient r WHERE r.telegramId = :telegramId ORDER BY n.createdAt DESC")
     List<Notification> findByRecipientTelegramIdOrderByCreatedAtDesc(@Param("telegramId") Long telegramId);
 

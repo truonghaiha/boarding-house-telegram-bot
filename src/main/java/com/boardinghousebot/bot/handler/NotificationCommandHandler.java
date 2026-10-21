@@ -1,5 +1,8 @@
 package com.boardinghousebot.bot.handler;
 
+import static com.boardinghousebot.util.TelegramUpdateUtil.extractChatId;
+import static com.boardinghousebot.util.TelegramUpdateUtil.extractText;
+
 import com.boardinghousebot.bot.command.BotMessageSender;
 import com.boardinghousebot.bot.command.CommandHandler;
 import com.boardinghousebot.domain.notification.Notification;
@@ -35,11 +38,6 @@ public class NotificationCommandHandler implements CommandHandler {
     }
 
     @Override
-    public String getDescription() {
-        return "Xem và quản lý thông báo hệ thống";
-    }
-
-    @Override
     public void handle(Update update, User user, BotMessageSender messageSender) {
         String action = update.hasMessage() ? update.getMessage().getText() : update.getCallbackQuery().getData();
         Long actionChatId = update.hasMessage() ? update.getMessage().getChatId() : update.getCallbackQuery().getMessage().getChatId();
@@ -54,7 +52,7 @@ public class NotificationCommandHandler implements CommandHandler {
 
         if (text == null) return;
 
-        log.info("NOTIFICATION ROUTING: telegramId={}, input={}", user.getTelegramId(), text);
+        log.debug("NOTIFICATION ROUTING: telegramId={}, input={}", user.getTelegramId(), text);
 
         try {
             if (text.startsWith("NOTIFICATION_DETAIL_")) {
@@ -111,23 +109,5 @@ public class NotificationCommandHandler implements CommandHandler {
                 notification.isRead() ? "NOTIFICATION_LIST_READ" : "NOTIFICATION_LIST_UNREAD")));
         sender.sendMessageWithKeyboard(chatId, notificationTitle(notification) + "\n\n" + notification.getMessage()
                 + "\n\n🕒 " + notification.getCreatedAt().format(DATE_TIME_FORMATTER), new InlineKeyboardMarkup(rows));
-    }
-
-    private Long extractChatId(Update update) {
-        if (update.hasMessage()) return update.getMessage().getChatId();
-        if (update.hasCallbackQuery() && update.getCallbackQuery().getMessage() != null) {
-            return update.getCallbackQuery().getMessage().getChatId();
-        }
-        return null;
-    }
-
-    private String extractText(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            return update.getMessage().getText();
-        }
-        if (update.hasCallbackQuery()) {
-            return update.getCallbackQuery().getData();
-        }
-        return null;
     }
 }

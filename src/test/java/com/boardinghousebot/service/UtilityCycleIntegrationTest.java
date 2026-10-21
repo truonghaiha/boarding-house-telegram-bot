@@ -26,6 +26,7 @@ class UtilityCycleIntegrationTest {
     @Autowired InvoiceService invoiceService;
     @Autowired PaymentService payments;
     @Autowired NotificationService notices;
+    @Autowired RoomStayRepository roomStays;
     User owner,member,other;
     Contract contract;
     LocalDate today=BillingDates.today();
@@ -54,6 +55,97 @@ class UtilityCycleIntegrationTest {
         var c=service.open(owner.getTelegramId(),contract.getRoom().getId());
         c=service.reading(owner.getTelegramId(),c.getId(),true,n("1100"));
         return service.reading(owner.getTelegramId(),c.getId(),false,n("110"));
+    }
+    @Test void currentMemberPeriodRequiresConfirmedBaselineAndDoesNotCreateUsageDraft() {
+        assertTrue(service.currentForMember(member.getTelegramId()).isEmpty());
+        var initial=service.open(owner.getTelegramId(),contract.getRoom().getId());
+        service.reading(owner.getTelegramId(),initial.getId(),true,n("1000"));
+        service.reading(owner.getTelegramId(),initial.getId(),false,n("100"));
+        assertTrue(service.currentForMember(member.getTelegramId()).isEmpty());
+        service.finalizeCycle(owner.getTelegramId(),initial.getId(),initial.getVersion());
+        long count=cycles.count();
+        long invoiceCount=invoices.count();
+        var view=service.currentForMember(member.getTelegramId()).orElseThrow();
+        assertEquals("CYCLE101",view.roomNumber());
+        assertEquals(contract.getStartDate(),view.start());
+        assertEquals(BillingDates.next(contract.getStartDate(),contract.getStartDate()),view.end());
+        assertEquals(0,n("1000").compareTo(view.electricityStart()));
+        assertEquals(0,n("100").compareTo(view.waterStart()));
+        assertNull(view.electricityEnd()); assertNull(view.waterEnd()); assertFalse(view.finalized());
+        assertEquals(count,cycles.count());
+        assertEquals(invoiceCount,invoices.count());
+    }
+    @Test void currentMemberPeriodHidesDraftEndReadingsAndCheckoutUntilFinalized() {
+        var draft=recordedOn(complete(),today.minusDays(1));
+        service.adjust(owner.getTelegramId(),draft.getId(),null,true);
+        var view=service.currentForMember(member.getTelegramId()).orElseThrow();
+        assertEquals(draft.getPlannedEnd(),view.end());
+        assertEquals(0,n("1000").compareTo(view.electricityStart()));
+        assertEquals(0,n("100").compareTo(view.waterStart()));
+        assertNull(view.electricityEnd()); assertNull(view.waterEnd()); assertFalse(view.finalized());
+        service.cancelDraft(owner.getTelegramId(),draft.getId());
+        service.confirmAndInvoice(owner.getTelegramId(),draft.getId(),draft.getVersion(),true);
+        var finalized=service.currentForMember(member.getTelegramId()).orElseThrow();
+        assertEquals(draft.getPeriodEnd(),finalized.end());
+        assertEquals(0,n("1100").compareTo(finalized.electricityEnd()));
+        assertEquals(0,n("110").compareTo(finalized.waterEnd())); assertTrue(finalized.finalized());
+        var next=service.open(owner.getTelegramId(),contract.getRoom().getId());
+        var current=service.currentForMember(member.getTelegramId()).orElseThrow();
+        assertEquals(next.getPeriodStart(),current.start());
+        assertEquals(next.getPlannedEnd(),current.end());
+        assertEquals(0,n("1100").compareTo(current.electricityStart()));
+        assertNull(current.electricityEnd()); assertFalse(current.finalized());
+    }
+    @Test void currentMemberPeriodChecksRoleResidenceAndRecordScope() {
+        baseline();
+        var draft=service.open(owner.getTelegramId(),contract.getRoom().getId());
+        assertTrue(service.currentForMember(other.getTelegramId()).isEmpty());
+        assertThrows(BusinessException.class,()->service.currentForMember(owner.getTelegramId()));
+        rooms.assignMemberToRoom(owner.getTelegramId(),other.getTelegramId(),contract.getRoom().getId());
+        org.mockito.Mockito.clearInvocations(sender);
+        assertTrue(service.currentForMember(other.getTelegramId()).isEmpty());
+        service.reading(owner.getTelegramId(),draft.getId(),true,n("1100"));
+        service.reading(owner.getTelegramId(),draft.getId(),false,n("110"));
+        service.confirmAndInvoice(owner.getTelegramId(),draft.getId(),draft.getVersion(),true);
+        service.open(owner.getTelegramId(),contract.getRoom().getId());
+        assertTrue(service.currentForMember(other.getTelegramId()).isPresent());
+        contract.setStatus(com.boardinghousebot.domain.contract.ContractStatus.ENDED);
+        assertTrue(service.currentForMember(member.getTelegramId()).isEmpty());
+        assertTrue(service.currentForMember(other.getTelegramId()).isEmpty());
+    }
+    @Test void memberSeesOnlyConfirmedBaselineWhileFirstUsagePeriodIsDraft() {
+        var initial=service.open(owner.getTelegramId(),contract.getRoom().getId());
+        service.reading(owner.getTelegramId(),initial.getId(),true,n("1000"));
+        service.reading(owner.getTelegramId(),initial.getId(),false,n("100"));
+        assertTrue(service.list(member.getTelegramId()).isEmpty());
+        assertThrows(BusinessException.class,()->service.get(member.getTelegramId(),initial.getId()));
+        var confirmed=service.finalizeCycle(owner.getTelegramId(),initial.getId(),initial.getVersion());
+        var draft=service.open(owner.getTelegramId(),contract.getRoom().getId());
+        service.reading(owner.getTelegramId(),draft.getId(),true,n("1100"));
+        service.reading(owner.getTelegramId(),draft.getId(),false,n("110"));
+        assertEquals(java.util.List.of(confirmed.getId()),service.list(member.getTelegramId()).stream().map(UtilityCycle::getId).toList());
+        assertEquals(0,n("1000").compareTo(service.get(member.getTelegramId(),confirmed.getId()).getElectricity()));
+        assertEquals(0,n("100").compareTo(service.get(member.getTelegramId(),confirmed.getId()).getWater()));
+        assertThrows(BusinessException.class,()->service.get(member.getTelegramId(),draft.getId()));
+        assertTrue(invoices.findByUtilityCycleId(confirmed.getId()).isEmpty());
+        assertTrue(invoices.findByUtilityCycleId(draft.getId()).isEmpty());
+        assertTrue(service.list(other.getTelegramId()).isEmpty());
+        assertThrows(BusinessException.class,()->service.get(other.getTelegramId(),confirmed.getId()));
+    }
+    @Test void baselineAccessForCoTenantRequiresRecordedStayAtHandoverAndSurvivesLeaving() {
+        roomStays.saveAndFlush(new com.boardinghousebot.domain.room.RoomStay(other,contract.getRoom(),contract.getStartDate().atStartOfDay()));
+        var confirmed=baseline();
+        assertEquals(confirmed.getId(),service.get(other.getTelegramId(),confirmed.getId()).getId());
+        var stay=roomStays.findByMemberTelegramIdAndRoomId(other.getTelegramId(),contract.getRoom().getId()).get(0);
+        stay.leave(LocalDateTime.now());
+        roomStays.saveAndFlush(stay);
+        contract.setStatus(com.boardinghousebot.domain.contract.ContractStatus.ENDED);
+        assertEquals(java.util.List.of(confirmed.getId()),service.list(other.getTelegramId()).stream().map(UtilityCycle::getId).toList());
+        assertEquals(confirmed.getId(),service.get(other.getTelegramId(),confirmed.getId()).getId());
+        var late=users.save(new User(981005L,"late","Late",Role.MEMBER));
+        roomStays.saveAndFlush(new com.boardinghousebot.domain.room.RoomStay(late,contract.getRoom(),LocalDateTime.now()));
+        assertTrue(service.list(late.getTelegramId()).isEmpty());
+        assertThrows(BusinessException.class,()->service.get(late.getTelegramId(),confirmed.getId()));
     }
     // Simulate a draft recorded on an earlier day; users cannot edit its date.
     UtilityCycle recordedOn(UtilityCycle c, LocalDate day) {

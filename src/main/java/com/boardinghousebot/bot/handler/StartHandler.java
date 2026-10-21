@@ -34,11 +34,6 @@ public class StartHandler implements CommandHandler {
     }
 
     @Override
-    public String getDescription() {
-        return "Bắt đầu sử dụng bot và xem menu chức năng";
-    }
-
-    @Override
     public void handle(Update update, User user, BotMessageSender messageSender) {
         if (user.getRole() == Role.MEMBER) {
             showMemberMenu(update, user, messageSender, true);

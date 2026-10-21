@@ -45,11 +45,6 @@ public class RoomCommandHandler implements CommandHandler {
     }
 
     @Override
-    public String getDescription() {
-        return "Quản lý phòng và người thuê";
-    }
-
-    @Override
     public void handle(Update update, User user, BotMessageSender messageSender) {
         String action = update.hasMessage() ? update.getMessage().getText() : update.getCallbackQuery().getData();
         Long actionChatId = update.hasMessage() ? update.getMessage().getChatId() : update.getCallbackQuery().getMessage().getChatId();

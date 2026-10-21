@@ -16,11 +16,6 @@ public class HelpHandler implements CommandHandler {
     }
 
     @Override
-    public String getDescription() {
-        return "Hiển thị trợ giúp và hướng dẫn sử dụng bot";
-    }
-
-    @Override
     public void handle(Update update, User user, BotMessageSender messageSender) {
         Long chatId = update.hasMessage() ? update.getMessage().getChatId() : update.getCallbackQuery().getMessage().getChatId();
 

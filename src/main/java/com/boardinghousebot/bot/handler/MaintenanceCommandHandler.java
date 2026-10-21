@@ -1,5 +1,8 @@
 package com.boardinghousebot.bot.handler;
 
+import static com.boardinghousebot.util.TelegramUpdateUtil.extractChatId;
+import static com.boardinghousebot.util.TelegramUpdateUtil.extractText;
+
 import com.boardinghousebot.bot.command.BotMessageSender;
 import com.boardinghousebot.bot.command.CommandHandler;
 import com.boardinghousebot.domain.maintenance.MaintenanceRequest;
@@ -40,11 +43,6 @@ public class MaintenanceCommandHandler implements CommandHandler {
     }
 
     @Override
-    public String getDescription() {
-        return "Quản lý và báo cáo sự cố bảo trì";
-    }
-
-    @Override
     public void handle(Update update, User user, BotMessageSender messageSender) {
         String action = update.hasMessage() ? update.getMessage().getText() : update.getCallbackQuery().getData();
         Long actionChatId = update.hasMessage() ? update.getMessage().getChatId() : update.getCallbackQuery().getMessage().getChatId();
@@ -61,7 +59,7 @@ public class MaintenanceCommandHandler implements CommandHandler {
 
         if (text == null) return;
 
-        log.info("MAINTENANCE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), text);
+        log.debug("MAINTENANCE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), text);
 
         if ("/cancel".equalsIgnoreCase(text) || "CANCEL_MAINTENANCE".equals(text)) {
             boolean isUpdate = state.getStep().name().startsWith("UPDATE_MAINTENANCE");
@@ -250,23 +248,5 @@ public class MaintenanceCommandHandler implements CommandHandler {
         } else {
             messageSender.sendMessageWithKeyboard(chatId, detailText.trim(), TelegramKeyboardUtil.getMemberMenu());
         }
-    }
-
-    private Long extractChatId(Update update) {
-        if (update.hasMessage()) return update.getMessage().getChatId();
-        if (update.hasCallbackQuery() && update.getCallbackQuery().getMessage() != null) {
-            return update.getCallbackQuery().getMessage().getChatId();
-        }
-        return null;
-    }
-
-    private String extractText(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            return update.getMessage().getText();
-        }
-        if (update.hasCallbackQuery()) {
-            return update.getCallbackQuery().getData();
-        }
-        return null;
     }
 }

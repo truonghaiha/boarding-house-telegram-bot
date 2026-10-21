@@ -1,5 +1,7 @@
 package com.boardinghousebot.bot.handler;
 
+import static com.boardinghousebot.util.TelegramUpdateUtil.extractText;
+
 import com.boardinghousebot.bot.command.BotMessageSender;
 import com.boardinghousebot.bot.command.CommandHandler;
 import com.boardinghousebot.domain.room.Room;
@@ -51,11 +53,6 @@ public class TenantCommandHandler implements CommandHandler {
     @Override
     public String getCommand() {
         return "/tenant";
-    }
-
-    @Override
-    public String getDescription() {
-        return "Quản lý xếp người thuê vào phòng";
     }
 
     @Override
@@ -253,20 +250,20 @@ public class TenantCommandHandler implements CommandHandler {
     private void processMoveTenantMemberIdInput(Long chatId, String input, Long landlordTelegramId, UserConversationState state, BotMessageSender messageSender) {
         try {
             Long targetTelegramId = Long.parseLong(input.trim());
-            log.info("MOVE_TENANT Step 1: Searching for member with Telegram ID={}", targetTelegramId);
+            log.debug("MOVE_TENANT Step 1: Searching for member with Telegram ID={}", targetTelegramId);
 
             User targetUser = userService.findByTelegramIdWithRoom(targetTelegramId)
                     .orElseThrow(() -> new BusinessException("Không tìm thấy người dùng với Telegram ID " + targetTelegramId + "."));
-            log.info("MOVE_TENANT Step 1 Success: Found user ID={}, username={}, fullName={}", targetUser.getId(), targetUser.getUsername(), targetUser.getFullName());
+            log.debug("MOVE_TENANT Step 1 Success: Found user ID={}, username={}, fullName={}", targetUser.getId(), targetUser.getUsername(), targetUser.getFullName());
 
-            log.info("MOVE_TENANT Step 2: Validating role for user Telegram ID={}", targetTelegramId);
+            log.debug("MOVE_TENANT Step 2: Validating role for user Telegram ID={}", targetTelegramId);
             if (targetUser.getRole() != Role.MEMBER) {
                 log.warn("MOVE_TENANT Step 2 Failed: User role is {}", targetUser.getRole());
                 throw new BusinessException("Chỉ MEMBER mới có thể được chuyển phòng.");
             }
-            log.info("MOVE_TENANT Step 2 Success: User role is MEMBER");
+            log.debug("MOVE_TENANT Step 2 Success: User role is MEMBER");
 
-            log.info("MOVE_TENANT Step 3: Getting current room for user Telegram ID={}", targetTelegramId);
+            log.debug("MOVE_TENANT Step 3: Getting current room for user Telegram ID={}", targetTelegramId);
             Room currentRoom = targetUser.getRoom();
             if (currentRoom == null) {
                 log.warn("MOVE_TENANT Step 3 Failed: User Telegram ID={} has no assigned room", targetTelegramId);
@@ -274,15 +271,15 @@ public class TenantCommandHandler implements CommandHandler {
             }
             if (state.getData().get("sourceRoomId") != null && !currentRoom.getId().equals(state.getData().get("sourceRoomId")))
                 throw new BusinessException("Người thuê không thuộc phòng đã chọn. Vui lòng nhập lại ID.");
-            log.info("MOVE_TENANT Step 3 Success: Current room ID={}, RoomNumber={}", currentRoom.getId(), currentRoom.getRoomNumber());
+            log.debug("MOVE_TENANT Step 3 Success: Current room ID={}, RoomNumber={}", currentRoom.getId(), currentRoom.getRoomNumber());
 
-            log.info("MOVE_TENANT Step 4: Getting available target rooms (excluding current room ID={})", currentRoom.getId());
+            log.debug("MOVE_TENANT Step 4: Getting available target rooms (excluding current room ID={})", currentRoom.getId());
             List<Room> allRooms = roomService.getAllRooms();
             List<Room> availableTargetRooms = allRooms.stream()
                     .filter(r -> !r.getId().equals(currentRoom.getId()))
                     .filter(r -> r.hasAvailableCapacity(roomService.getCurrentOccupantCount(r.getId())))
                     .toList();
-            log.info("MOVE_TENANT Step 4 Success: Found {} available target rooms", availableTargetRooms.size());
+            log.debug("MOVE_TENANT Step 4 Success: Found {} available target rooms", availableTargetRooms.size());
 
             if (availableTargetRooms.isEmpty()) {
                 log.warn("MOVE_TENANT Step 4 Failed: No available target rooms found");
@@ -298,7 +295,7 @@ public class TenantCommandHandler implements CommandHandler {
             state.setStep(Step.MOVE_TENANT_TARGET_ROOM_SELECT);
             stateService.setState(landlordTelegramId, state);
 
-            log.info("MOVE_TENANT Step 5: Creating inline keyboard for target rooms");
+            log.debug("MOVE_TENANT Step 5: Creating inline keyboard for target rooms");
             List<InlineKeyboardRow> rows = new ArrayList<>();
             for (Room r : availableTargetRooms) {
                 int occ = roomService.getCurrentOccupantCount(r.getId());
@@ -306,7 +303,7 @@ public class TenantCommandHandler implements CommandHandler {
                 rows.add(new InlineKeyboardRow(TelegramKeyboardUtil.createButton(label, "SELECT_MOVE_TARGET_ROOM_" + r.getId())));
             }
             rows.add(new InlineKeyboardRow(TelegramKeyboardUtil.createButton("❌ Hủy", "CANCEL_MOVE_TENANT")));
-            log.info("MOVE_TENANT Step 5 Success: Created inline keyboard with {} rows", rows.size());
+            log.debug("MOVE_TENANT Step 5 Success: Created inline keyboard with {} rows", rows.size());
 
             String promptMsg = String.format("""
                     🔄 THÔNG TIN CHUYỂN PHÒNG
@@ -323,9 +320,9 @@ public class TenantCommandHandler implements CommandHandler {
                     currentRoom.getRoomNumber()
             );
 
-            log.info("MOVE_TENANT Step 6: Sending message with inline keyboard to chatId={}", chatId);
+            log.debug("MOVE_TENANT Step 6: Sending message with inline keyboard to chatId={}", chatId);
             messageSender.sendMessageWithKeyboard(chatId, promptMsg, new InlineKeyboardMarkup(rows));
-            log.info("MOVE_TENANT Step 6 Success: Message sent successfully");
+            log.debug("MOVE_TENANT Step 6 Success: Message sent successfully");
 
         } catch (NumberFormatException e) {
             log.warn("MOVE_TENANT Error: Invalid Telegram ID format '{}'", input);
@@ -620,15 +617,5 @@ public class TenantCommandHandler implements CommandHandler {
         }
 
         messageSender.sendMessageWithKeyboard(chatId, sb.toString().trim(), TelegramKeyboardUtil.getBackKeyboard("ROOM_DETAIL_" + roomId));
-    }
-
-    private String extractText(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            return update.getMessage().getText();
-        }
-        if (update.hasCallbackQuery()) {
-            return update.getCallbackQuery().getData();
-        }
-        return null;
     }
 }

@@ -23,30 +23,6 @@ public class TelegramConfig {
     @Value("${telegram.admin-id:}")
     private String adminId;
 
-    public String getBotUsername() {
-        return botUsername;
-    }
-
-    public void setBotUsername(String botUsername) {
-        this.botUsername = botUsername;
-    }
-
-    public String getBotToken() {
-        return botToken;
-    }
-
-    public void setBotToken(String botToken) {
-        this.botToken = botToken;
-    }
-
-    public String getAdminId() {
-        return adminId;
-    }
-
-    public void setAdminId(String adminId) {
-        this.adminId = adminId;
-    }
-
     public Long getRequiredAdminTelegramId() {
         String value = adminId == null ? "" : adminId.trim();
         if (value.matches("[1-9][0-9]*")) {

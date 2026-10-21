@@ -1,5 +1,8 @@
 package com.boardinghousebot.bot.handler;
 
+import static com.boardinghousebot.util.TelegramUpdateUtil.extractChatId;
+import static com.boardinghousebot.util.TelegramUpdateUtil.extractText;
+
 import com.boardinghousebot.bot.command.BotMessageSender;
 import com.boardinghousebot.bot.command.CommandHandler;
 import com.boardinghousebot.domain.invoice.Invoice;
@@ -56,11 +59,6 @@ public class InvoiceCommandHandler implements CommandHandler {
     }
 
     @Override
-    public String getDescription() {
-        return "Quản lý hóa đơn và thanh toán";
-    }
-
-    @Override
     public void handle(Update update, User user, BotMessageSender messageSender) {
         String action = update.hasMessage() ? update.getMessage().getText() : update.getCallbackQuery().getData();
         Long actionChatId = update.hasMessage() ? update.getMessage().getChatId() : update.getCallbackQuery().getMessage().getChatId();
@@ -77,7 +75,7 @@ public class InvoiceCommandHandler implements CommandHandler {
 
         if (text == null) return;
 
-        log.info("INVOICE STATE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), text);
+        log.debug("INVOICE STATE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), text);
 
         if ("/cancel".equalsIgnoreCase(text) || "CANCEL_CREATE_INVOICE".equals(text) || "CANCEL_RECORD_PAYMENT".equals(text)) {
             boolean isPayment = "CANCEL_RECORD_PAYMENT".equals(text) || state.getStep().name().startsWith("RECORD_PAYMENT");
@@ -322,23 +320,5 @@ public class InvoiceCommandHandler implements CommandHandler {
         } else {
             messageSender.sendMessageWithKeyboard(chatId,text,TelegramKeyboardUtil.getMemberInvoiceMenu());
         }
-    }
-
-    private Long extractChatId(Update update) {
-        if (update.hasMessage()) return update.getMessage().getChatId();
-        if (update.hasCallbackQuery() && update.getCallbackQuery().getMessage() != null) {
-            return update.getCallbackQuery().getMessage().getChatId();
-        }
-        return null;
-    }
-
-    private String extractText(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            return update.getMessage().getText();
-        }
-        if (update.hasCallbackQuery()) {
-            return update.getCallbackQuery().getData();
-        }
-        return null;
     }
 }

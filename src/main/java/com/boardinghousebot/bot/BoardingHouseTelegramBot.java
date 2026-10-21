@@ -1,5 +1,8 @@
 package com.boardinghousebot.bot;
 
+import static com.boardinghousebot.util.TelegramUpdateUtil.extractChatId;
+import static com.boardinghousebot.util.TelegramUpdateUtil.extractText;
+
 import com.boardinghousebot.bot.command.BotMessageSender;
 import com.boardinghousebot.bot.command.CommandHandler;
 import com.boardinghousebot.config.TelegramConfig;
@@ -117,7 +120,7 @@ public class BoardingHouseTelegramBot implements LongPollingSingleThreadUpdateCo
             ui = uiSessions.open(update, user, this, stateService);
             if (!ui.acceptsCallback()) return;
 
-            String commandText = extractCommandOrAction(update);
+            String commandText = extractText(update);
             if (update.hasCallbackQuery() && "/cancel".equals(commandText)) {
                 // Reuse text cancellation, including handlers that only accept message input.
                 update = navigationUpdate(update, commandText);
@@ -341,7 +344,7 @@ public class BoardingHouseTelegramBot implements LongPollingSingleThreadUpdateCo
         if (telegramId != null && stateService != null) {
             UserConversationState state = stateService.getState(telegramId);
             if (state.getStep() != UserConversationState.Step.NONE) {
-                log.info("STATE ROUTING: telegramId={}, step={}, input={}", telegramId, state.getStep(), commandText);
+                log.debug("STATE ROUTING: telegramId={}, step={}, input={}", telegramId, state.getStep(), commandText);
                 String stepName = state.getStep().name();
                 if (stepName.equals("ADMIN_SEARCH_USERS") || stepName.startsWith("ADMIN_ROLE_CHANGE")) {
                     return commandHandlerMap.get("/menu");
@@ -454,21 +457,4 @@ public class BoardingHouseTelegramBot implements LongPollingSingleThreadUpdateCo
         return "Telegram User";
     }
 
-    private Long extractChatId(Update update) {
-        if (update.hasMessage()) return update.getMessage().getChatId();
-        if (update.hasCallbackQuery() && update.getCallbackQuery().getMessage() != null) {
-            return update.getCallbackQuery().getMessage().getChatId();
-        }
-        return null;
-    }
-
-    private String extractCommandOrAction(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            return update.getMessage().getText();
-        }
-        if (update.hasCallbackQuery()) {
-            return update.getCallbackQuery().getData();
-        }
-        return null;
-    }
 }

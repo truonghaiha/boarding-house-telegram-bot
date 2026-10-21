@@ -1,9 +1,14 @@
 package com.boardinghousebot.state;
 
+import lombok.Getter;
+import lombok.Setter;
+
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
 
+@Getter
+@Setter
 public class UserConversationState {
 
     public enum Step {
@@ -80,8 +85,6 @@ public class UserConversationState {
         RECORD_PAYMENT_CONFIRM,
         CREATE_MAINTENANCE_TITLE,
         CREATE_MAINTENANCE_DESC,
-        UPDATE_MAINTENANCE_ID,
-        UPDATE_MAINTENANCE_STATUS,
         UPDATE_MAINTENANCE_NOTE
     }
 
@@ -101,67 +104,4 @@ public class UserConversationState {
         this.step = step;
     }
 
-    public Step getStep() {
-        return step;
-    }
-
-    public void setStep(Step step) {
-        this.step = step;
-    }
-
-    public Long getTargetRoomId() {
-        return targetRoomId;
-    }
-
-    public void setTargetRoomId(Long targetRoomId) {
-        this.targetRoomId = targetRoomId;
-    }
-
-    public Long getTargetUserTelegramId() {
-        return targetUserTelegramId;
-    }
-
-    public void setTargetUserTelegramId(Long targetUserTelegramId) {
-        this.targetUserTelegramId = targetUserTelegramId;
-    }
-
-    public String getRoomNumber() {
-        return roomNumber;
-    }
-
-    public void setRoomNumber(String roomNumber) {
-        this.roomNumber = roomNumber;
-    }
-
-    public BigDecimal getMonthlyRent() {
-        return monthlyRent;
-    }
-
-    public void setMonthlyRent(BigDecimal monthlyRent) {
-        this.monthlyRent = monthlyRent;
-    }
-
-    public Integer getMaxOccupants() {
-        return maxOccupants;
-    }
-
-    public void setMaxOccupants(Integer maxOccupants) {
-        this.maxOccupants = maxOccupants;
-    }
-
-    public String getDescription() {
-        return description;
-    }
-
-    public void setDescription(String description) {
-        this.description = description;
-    }
-
-    public Map<String, Object> getData() {
-        return data;
-    }
-
-    public void setData(Map<String, Object> data) {
-        this.data = data;
-    }
 }

@@ -92,6 +92,32 @@ public class UtilityCycleService {
         auth.requireMember(user);
         return cycles.allDetails().stream().filter(c -> c.isFinalized() && canRead(user,c)).toList();
     }
+    public record MemberCycleView(String roomNumber,LocalDate start,LocalDate end,
+            BigDecimal electricityStart,BigDecimal electricityEnd,BigDecimal waterStart,BigDecimal waterEnd,boolean finalized) {}
+    @Transactional(readOnly=true)
+    public Optional<MemberCycleView> currentForMember(Long actor) {
+        var user=users.findByTelegramId(actor).orElseThrow(() -> error("Không tìm thấy người dùng."));
+        auth.requireMember(user);
+        var residence=stays.getCurrentResidence(actor);
+        if(!residence.isRenting()) return Optional.empty();
+        var latest=cycles.allDetails().stream()
+                .filter(c -> c.getContract().getStatus()==ContractStatus.ACTIVE
+                        && c.getContract().getRoom().getId().equals(residence.room().getId()))
+                .max(Comparator.comparing(UtilityCycle::getId));
+        if(latest.isEmpty()) return Optional.empty();
+        var c=latest.get();
+        if((c.isBaseline() && !c.isFinalized()) || !canRead(user,c)) return Optional.empty();
+        if(c.isBaseline()) {
+            var end=BillingDates.next(c.getContract().getStartDate(),c.getPeriodStart());
+            if(c.getContract().getEndDate().isBefore(end)) end=c.getContract().getEndDate();
+            return Optional.of(new MemberCycleView(c.getContract().getRoom().getRoomNumber(),c.getPeriodStart(),end,
+                    c.getElectricity(),null,c.getWater(),null,false));
+        }
+        // Only confirmed starting readings are public while the landlord is entering the ending readings.
+        return Optional.of(new MemberCycleView(c.getContract().getRoom().getRoomNumber(),c.getPeriodStart(),
+                c.isFinalized()?c.getPeriodEnd():c.getPlannedEnd(),c.getPreviousElectricity(),
+                c.isFinalized()?c.getElectricity():null,c.getPreviousWater(),c.isFinalized()?c.getWater():null,c.isFinalized()));
+    }
     public UtilityCycle open(Long actor, Long roomId) {
         landlord(actor);
         Contract contract=contracts.findActiveContractByRoomId(roomId).orElseThrow(() -> error("Phòng chưa có hợp đồng đang hiệu lực. Vui lòng tạo hợp đồng trước."));

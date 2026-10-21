@@ -59,13 +59,6 @@ public class InvoiceService {
         this.eventPublisher = eventPublisher;
     }
 
-    @Transactional(readOnly=true)
-    public LocalDate previewDueDate(Long roomId,Integer month,Integer year) {
-        var c=contractRepository.findActiveContractByRoomId(roomId)
-                .orElseThrow(() -> new BusinessException("Phòng chưa có hợp đồng đang hiệu lực."));
-        return com.boardinghousebot.util.BillingDates.due(c.getStartDate(),month,year);
-    }
-
     @Transactional
     public Invoice createInvoice(Long landlordTelegramId, Long roomId, Integer billingMonth, Integer billingYear) {
         User landlord = userRepository.findByTelegramId(landlordTelegramId)
@@ -195,12 +188,6 @@ public class InvoiceService {
         int year = ((Number) first[0]).intValue();
         int month = ((Number) first[1]).intValue();
         return new int[]{month, year};
-    }
-
-    @Transactional
-    public List<Invoice> getLatestPeriodInvoices() {
-        int[] latest = getLatestBillingPeriod();
-        return getFilteredInvoices(null, null, latest[0], latest[1]);
     }
 
     @Transactional(readOnly = true)

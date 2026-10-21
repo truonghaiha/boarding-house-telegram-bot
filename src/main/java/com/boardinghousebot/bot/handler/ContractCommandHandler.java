@@ -1,5 +1,8 @@
 package com.boardinghousebot.bot.handler;
 
+import static com.boardinghousebot.util.TelegramUpdateUtil.extractChatId;
+import static com.boardinghousebot.util.TelegramUpdateUtil.extractText;
+
 import com.boardinghousebot.bot.command.BotMessageSender;
 import com.boardinghousebot.bot.command.CommandHandler;
 import com.boardinghousebot.domain.contract.Contract;
@@ -55,11 +58,6 @@ public class ContractCommandHandler implements CommandHandler {
     }
 
     @Override
-    public String getDescription() {
-        return "Quản lý hợp đồng thuê phòng";
-    }
-
-    @Override
     public void handle(Update update, User user, BotMessageSender messageSender) {
         String action = update.hasMessage() ? update.getMessage().getText() : update.getCallbackQuery().getData();
         Long actionChatId = update.hasMessage() ? update.getMessage().getChatId() : update.getCallbackQuery().getMessage().getChatId();
@@ -76,7 +74,7 @@ public class ContractCommandHandler implements CommandHandler {
 
         if (text == null) return;
 
-        log.info("CONTRACT STATE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), text);
+        log.debug("CONTRACT STATE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), text);
 
         if ("/cancel".equalsIgnoreCase(text) || "CANCEL_CREATE_CONTRACT".equals(text) || "CANCEL_UPDATE_CONTRACT".equals(text)) {
             boolean isUpdate = "CANCEL_UPDATE_CONTRACT".equals(text) || state.getStep().name().startsWith("UPDATE_CONTRACT");
@@ -249,7 +247,7 @@ public class ContractCommandHandler implements CommandHandler {
         state.setStep(UserConversationState.Step.CREATE_CONTRACT_START_DATE);
         stateService.setState(user.getTelegramId(), state);
 
-        log.info("CONTRACT STATE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), text);
+        log.debug("CONTRACT STATE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), text);
 
         String representativeName = member.getFullName() != null && !member.getFullName().isBlank()
                 ? member.getFullName() : member.getUsername() != null && !member.getUsername().isBlank()
@@ -259,7 +257,7 @@ public class ContractCommandHandler implements CommandHandler {
     }
 
     private void handleConversationStep(Long chatId, User user, String input, UserConversationState state, BotMessageSender messageSender) {
-        log.info("CONTRACT STATE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), input);
+        log.debug("CONTRACT STATE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), input);
         switch (state.getStep()) {
             case CREATE_CONTRACT_ROOM_SELECT -> {
                 messageSender.sendNotice(chatId, "❌ Vui lòng chọn phòng từ danh sách phím bấm bên dưới.");
@@ -276,7 +274,7 @@ public class ContractCommandHandler implements CommandHandler {
                 state.getData().put("startDate", startDate);
                 state.setStep(UserConversationState.Step.CREATE_CONTRACT_END_DATE);
                 stateService.setState(user.getTelegramId(), state);
-                log.info("Contract creation step: startDate={}, next step=CREATE_CONTRACT_END_DATE", startDate);
+                log.debug("Contract creation step: startDate={}, next step=CREATE_CONTRACT_END_DATE", startDate);
                 messageSender.sendPrompt(chatId, "📅 Nhập ngày kết thúc hợp đồng (định dạng dd/MM/yyyy, ví dụ: 20/09/2027):");
             }
             case CREATE_CONTRACT_END_DATE -> {
@@ -293,7 +291,7 @@ public class ContractCommandHandler implements CommandHandler {
                 state.getData().put("endDate", endDate);
                 state.setStep(UserConversationState.Step.CREATE_CONTRACT_RENT);
                 stateService.setState(user.getTelegramId(), state);
-                log.info("Contract creation step: endDate={}, next step=CREATE_CONTRACT_RENT", endDate);
+                log.debug("Contract creation step: endDate={}, next step=CREATE_CONTRACT_RENT", endDate);
                 showPricePrompt(chatId, state, true, messageSender);
             }
             case CREATE_CONTRACT_RENT -> {
@@ -305,7 +303,7 @@ public class ContractCommandHandler implements CommandHandler {
                 state.getData().put("rent", rent);
                 state.setStep(UserConversationState.Step.CREATE_CONTRACT_DEPOSIT);
                 stateService.setState(user.getTelegramId(), state);
-                log.info("Contract creation step: rent={}, next step=CREATE_CONTRACT_DEPOSIT", rent);
+                log.debug("Contract creation step: rent={}, next step=CREATE_CONTRACT_DEPOSIT", rent);
                 showPricePrompt(chatId, state, false, messageSender);
             }
             case CREATE_CONTRACT_DEPOSIT -> {
@@ -317,7 +315,7 @@ public class ContractCommandHandler implements CommandHandler {
                 state.getData().put("deposit", deposit);
                 state.setStep(UserConversationState.Step.CREATE_CONTRACT_CONFIRM);
                 stateService.setState(user.getTelegramId(), state);
-                log.info("Contract creation step: deposit={}, next step=CREATE_CONTRACT_CONFIRM", deposit);
+                log.debug("Contract creation step: deposit={}, next step=CREATE_CONTRACT_CONFIRM", deposit);
 
                 showContractCreatePreview(chatId, state, messageSender);
             }
@@ -721,23 +719,5 @@ public class ContractCommandHandler implements CommandHandler {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    private Long extractChatId(Update update) {
-        if (update.hasMessage()) return update.getMessage().getChatId();
-        if (update.hasCallbackQuery() && update.getCallbackQuery().getMessage() != null) {
-            return update.getCallbackQuery().getMessage().getChatId();
-        }
-        return null;
-    }
-
-    private String extractText(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            return update.getMessage().getText();
-        }
-        if (update.hasCallbackQuery()) {
-            return update.getCallbackQuery().getData();
-        }
-        return null;
     }
 }

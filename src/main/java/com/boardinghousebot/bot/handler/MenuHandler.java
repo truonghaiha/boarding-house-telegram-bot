@@ -45,11 +45,6 @@ public class MenuHandler implements CommandHandler {
     }
 
     @Override
-    public String getDescription() {
-        return "Mở menu chức năng";
-    }
-
-    @Override
     public void handle(Update update, User user, BotMessageSender messageSender) {
         String action = update.hasMessage() ? update.getMessage().getText() : update.getCallbackQuery().getData();
         Long actionChatId = update.hasMessage() ? update.getMessage().getChatId() : update.getCallbackQuery().getMessage().getChatId();

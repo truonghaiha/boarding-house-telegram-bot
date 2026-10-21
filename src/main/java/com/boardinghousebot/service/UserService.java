@@ -115,19 +115,8 @@ public class UserService {
     }
 
     @Transactional(readOnly = true)
-    public User getUserById(Long id) {
-        return userRepository.findById(id)
-                .orElseThrow(() -> new BusinessException("Không tìm thấy người dùng."));
-    }
-
-    @Transactional(readOnly = true)
     public List<User> getAllUsers() {
         return userRepository.findAll();
-    }
-
-    @Transactional(readOnly = true)
-    public List<User> getUsersByRole(Role role) {
-        return userRepository.findByRole(role);
     }
 
     @Transactional(readOnly = true)
@@ -224,14 +213,6 @@ public class UserService {
         eventPublisher.publishEvent(new com.boardinghousebot.observer.RoleChangedEvent(updatedUser, oldRole, Role.MEMBER));
 
         return updatedUser;
-    }
-
-    @Transactional
-    public User updateUser(User user) {
-        if (user == null || user.getId() == null) {
-            throw new BusinessException("Thông tin người dùng không hợp lệ.");
-        }
-        return userRepository.save(user);
     }
 
     @Transactional

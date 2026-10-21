@@ -34,6 +34,75 @@ class UtilityCycleFlowTest {
         when(service.estimate(99L,1L)).thenReturn(new UtilityCycleService.Estimate(new BigDecimal("3000"),new BigDecimal("35000"),new BigDecimal("300000"),new BigDecimal("350000")));
     }
     void meter(String action) { assertTrue(flow.meter(99L,owner,action,states.getState(99L),sender)); }
+    @Test void memberMeterButtonShowsCurrentPeriodImmediatelyWithOnlyMainMenu() {
+        var member=c.getContract().getMember();
+        for(boolean finalized:List.of(false,true)) {
+            clearInvocations(sender);
+            when(service.currentForMember(1L)).thenReturn(Optional.of(new UtilityCycleService.MemberCycleView(
+                    "101",c.getPeriodStart(),c.getPeriodEnd(),new BigDecimal("1000"),finalized?new BigDecimal("1100"):null,
+                    new BigDecimal("100"),finalized?new BigDecimal("110"):null,finalized)));
+            assertTrue(flow.meter(1L,member,"MEMBER_METERS",states.getState(1L),sender));
+            verify(sender).sendMessageWithKeyboard(eq(1L),argThat(text ->
+                    text.contains("ĐIỆN NƯỚC KỲ HIỆN TẠI") && text.contains("Phòng: 101")
+                    && text.contains("Chỉ số đầu kỳ: 1000 kWh") && text.contains("Chỉ số đầu kỳ: 100 m³")
+                    && (finalized?text.contains("Chỉ số cuối kỳ: 1100 kWh") && text.contains("Chỉ số cuối kỳ: 110 m³")
+                        && text.contains("Tình trạng: Đã chốt kỳ")
+                        :text.contains("Chỉ số cuối kỳ: Chưa chốt") && text.contains("chưa phát sinh tiền điện nước"))),argThat(keyboard ->
+                    keyboard.getKeyboard().stream().flatMap(Collection::stream).map(button -> button.getCallbackData()).toList()
+                        .equals(List.of("MAIN_MENU"))));
+            assertEquals(UserConversationState.Step.NONE,states.getState(1L).getStep());
+        }
+        verify(service,never()).list(anyLong());
+        verify(service,never()).open(anyLong(),anyLong());
+    }
+    @Test void memberMeterButtonHasEmptyStateWithoutFallingBackToOldPeriods() {
+        when(service.currentForMember(1L)).thenReturn(Optional.empty());
+        assertTrue(flow.meter(1L,c.getContract().getMember(),"MEMBER_METERS",states.getState(1L),sender));
+        verify(sender).sendMessageWithKeyboard(eq(1L),contains("Chưa có kỳ điện nước được phép xem"),argThat(keyboard ->
+                keyboard.getKeyboard().stream().flatMap(Collection::stream).map(button -> button.getCallbackData()).toList()
+                    .equals(List.of("MAIN_MENU"))));
+        verify(service,never()).list(anyLong());
+    }
+    @Test void memberCanOpenConfirmedInitialReadingsFromListWithoutEditingOrBilling() {
+        var member=c.getContract().getMember();
+        c.setBaseline(true); c.setFinalized(true); c.setPeriodEnd(c.getPeriodStart());
+        c.setElectricity(new BigDecimal("1000")); c.setWater(new BigDecimal("100"));
+        when(service.list(1L)).thenReturn(List.of(c));
+        when(service.get(1L,1L)).thenReturn(c);
+        assertTrue(flow.meter(1L,member,"MEMBER_METER_ALL",states.getState(1L),sender));
+        verify(sender).sendMessageWithKeyboard(eq(1L),anyString(),argThat(keyboard ->
+                keyboard.getKeyboard().get(0).get(0).getText().startsWith("Phòng 101 · Chỉ số ban đầu · ")
+                && keyboard.getKeyboard().stream().flatMap(Collection::stream).map(button -> button.getCallbackData()).toList()
+                    .equals(List.of("MEMBER_CYCLE_DETAIL_1","MAIN_MENU"))));
+        clearInvocations(sender);
+        assertTrue(flow.meter(1L,member,"MEMBER_CYCLE_DETAIL_1",states.getState(1L),sender));
+        verify(sender).sendMessageWithKeyboard(eq(1L),argThat(text ->
+                text.contains("CHỈ SỐ BAN ĐẦU PHÒNG 101")
+                && text.contains("Chỉ số điện ban đầu: 1000 kWh")
+                && text.contains("Chỉ số nước ban đầu: 100 m³")
+                && text.contains("Đã xác nhận chỉ số ban đầu")
+                && text.contains("Mốc ban đầu chưa có chỉ số cuối kỳ, chưa phát sinh tiền điện nước.")
+                && !text.contains("Chưa ghi số cuối kỳ")),argThat(keyboard ->
+                keyboard.getKeyboard().stream().flatMap(Collection::stream).map(button -> button.getCallbackData()).toList()
+                    .equals(List.of("MEMBER_METERS"))));
+        assertEquals(UserConversationState.Step.NONE,states.getState(1L).getStep());
+        verify(service,never()).open(anyLong(),anyLong());
+        verify(service,never()).reading(anyLong(),anyLong(),anyBoolean(),any());
+        verify(service,never()).publish(anyLong(),anyLong(),anyLong());
+    }
+    @Test void memberListKeepsAuthorizedInitialReadingsAndPeriodsAfterContractEnds() {
+        var member=c.getContract().getMember();
+        c.setFinalized(true);
+        c.getContract().setStatus(com.boardinghousebot.domain.contract.ContractStatus.ENDED);
+        var baseline=new UtilityCycle();
+        baseline.setId(2L); baseline.setContract(c.getContract()); baseline.setBaseline(true); baseline.setFinalized(true);
+        baseline.setPeriodStart(c.getPeriodStart()); baseline.setPeriodEnd(c.getPeriodStart());
+        when(service.list(1L)).thenReturn(List.of(c,baseline));
+        assertTrue(flow.meter(1L,member,"MEMBER_METER_ALL",states.getState(1L),sender));
+        verify(sender).sendMessageWithKeyboard(eq(1L),contains("Chọn một kỳ"),argThat(keyboard ->
+                keyboard.getKeyboard().stream().flatMap(Collection::stream).map(button -> button.getCallbackData()).toList()
+                    .equals(List.of("MEMBER_CYCLE_DETAIL_1","MEMBER_CYCLE_DETAIL_2","MAIN_MENU"))));
+    }
     @Test void upcomingRoomsShowDueDatesAndOpenExistingOrUnopenedPeriods() {
         var today=BillingDates.today();
         when(service.upcomingInvoiceRooms(99L)).thenReturn(List.of(

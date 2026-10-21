@@ -177,26 +177,6 @@ public class MeterReadingService {
     }
 
     @Transactional(readOnly = true)
-    public List<MeterReading> getAllReadings() {
-        return meterReadingRepository.findAllWithDetails();
-    }
-
-    @Transactional(readOnly = true)
-    public List<MeterReading> getReadingsByRoom(Long roomId) {
-        return meterReadingRepository.findByRoomIdWithDetails(roomId);
-    }
-
-    @Transactional(readOnly = true)
-    public List<MeterReading> getReadingsByUtilityType(UtilityType utilityType) {
-        return meterReadingRepository.findByUtilityTypeWithDetails(utilityType);
-    }
-
-    @Transactional(readOnly = true)
-    public List<MeterReading> getReadingsByRoomAndUtility(Long roomId, UtilityType utilityType) {
-        return meterReadingRepository.findByRoomIdAndUtilityTypeWithDetails(roomId, utilityType);
-    }
-
-    @Transactional(readOnly = true)
     public List<MeterReading> getFilteredReadings(Long roomId, UtilityType utilityType, Integer month, Integer year) {
         return meterReadingRepository.filterReadingsWithDetails(roomId, utilityType, month, year);
     }

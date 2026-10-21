@@ -1,5 +1,8 @@
 package com.boardinghousebot.bot.handler;
 
+import static com.boardinghousebot.util.TelegramUpdateUtil.extractChatId;
+import static com.boardinghousebot.util.TelegramUpdateUtil.extractText;
+
 import com.boardinghousebot.bot.command.BotMessageSender;
 import com.boardinghousebot.bot.command.CommandHandler;
 import com.boardinghousebot.domain.meter.MeterReading;
@@ -61,11 +64,6 @@ public class MeterCommandHandler implements CommandHandler {
     }
 
     @Override
-    public String getDescription() {
-        return "Quản lý chỉ số điện nước";
-    }
-
-    @Override
     public void handle(Update update, User user, BotMessageSender messageSender) {
         String action = update.hasMessage() ? update.getMessage().getText() : update.getCallbackQuery().getData();
         Long actionChatId = update.hasMessage() ? update.getMessage().getChatId() : update.getCallbackQuery().getMessage().getChatId();
@@ -86,7 +84,7 @@ public class MeterCommandHandler implements CommandHandler {
                 && cycleFlow.meter(chatId,user,text,state,messageSender)) return;
         if ("MEMBER_METER_LEGACY".equals(text)) { showMemberMeterReadings(chatId,user,messageSender,null); return; }
         if ("METER_LEGACY_LIST".equals(text)) { listLatestReadings(chatId,user,messageSender); return; }
-        log.info("METER STATE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), text);
+        log.debug("METER STATE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), text);
 
         if ("/cancel".equalsIgnoreCase(text) || "CANCEL_CREATE_METER".equals(text) || "CANCEL_UPDATE_METER".equals(text)) {
             boolean isUpdate = "CANCEL_UPDATE_METER".equals(text) || state.getStep().name().startsWith("UPDATE_METER");
@@ -292,7 +290,7 @@ public class MeterCommandHandler implements CommandHandler {
     }
 
     private void handleConversationStep(Long chatId, User user, String input, UserConversationState state, BotMessageSender messageSender) {
-        log.info("METER STATE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), input);
+        log.debug("METER STATE ROUTING: telegramId={}, step={}, input={}", user.getTelegramId(), state.getStep(), input);
 
         switch (state.getStep()) {
             case CREATE_METER_ROOM_SELECT -> {
@@ -800,23 +798,6 @@ public class MeterCommandHandler implements CommandHandler {
         }
     }
 
-    private Long extractChatId(Update update) {
-        if (update.hasMessage()) return update.getMessage().getChatId();
-        if (update.hasCallbackQuery() && update.getCallbackQuery().getMessage() != null) {
-            return update.getCallbackQuery().getMessage().getChatId();
-        }
-        return null;
-    }
-
-    private String extractText(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            return update.getMessage().getText();
-        }
-        if (update.hasCallbackQuery()) {
-            return update.getCallbackQuery().getData();
-        }
-        return null;
-    }
     private void handleUtilityRate(Long chatId, User user, String action, UserConversationState state, BotMessageSender sender) {
         if (user.getRole() != Role.LANDLORD) {
             sender.sendNotice(chatId, "❌ Bạn không có quyền thực hiện chức năng này.");

@@ -136,13 +136,4 @@ public class MaintenanceService {
         return maintenanceRequestRepository.findAllWithDetails();
     }
 
-    @Transactional(readOnly = true)
-    public List<MaintenanceRequest> getMaintenanceRequestsByMember(Long telegramId) {
-        return maintenanceRequestRepository.findByMemberTelegramIdWithDetails(telegramId);
-    }
-
-    @Transactional(readOnly = true)
-    public List<MaintenanceRequest> getMaintenanceRequestsByStatus(MaintenanceStatus status) {
-        return maintenanceRequestRepository.findByStatusWithDetails(status);
-    }
 }

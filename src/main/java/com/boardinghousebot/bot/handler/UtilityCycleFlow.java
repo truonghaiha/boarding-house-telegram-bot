@@ -43,7 +43,8 @@ public class UtilityCycleFlow {
                 if(cycleId!=null) service.cancelDraft(user.getTelegramId(),cycleId);
                 states.clearState(user.getTelegramId());
                 sender.sendMessageWithKeyboard(chat,"Đã hủy thao tác. Các chỉ số đã nhập được giữ nguyên.",TelegramKeyboardUtil.getLandlordMeterManagementMenu());
-            } else if (action.equals("METER_ADD")) rooms(chat,user,sender);
+            } else if (member && action.equals("MEMBER_METERS")) currentMemberCycle(chat,user,sender);
+            else if (action.equals("METER_ADD")) rooms(chat,user,sender);
             else if (action.equals("METER_LIST_ALL") || action.equals("METER_LIST_LATEST") || action.startsWith("METER_CYCLE_LIST_") || Set.of("MEMBER_METERS","MEMBER_METER_ALL").contains(action)) {
                 String filter=action.startsWith("METER_CYCLE_LIST_")?action.substring("METER_CYCLE_LIST_".length()):"ACTIVE";
                 list(chat,user,filter,state,sender);
@@ -191,6 +192,22 @@ public class UtilityCycleFlow {
         return c.getElectricity()==null && c.getWater()==null?"Chưa ghi số cuối kỳ":"Đang nhập dở";
     }
     private boolean serviceHasInvoice(UtilityCycle c) { return service.invoiceId(c.getId()).isPresent(); }
+    private void currentMemberCycle(Long chat,User user,BotMessageSender sender) {
+        states.clearState(user.getTelegramId());
+        var current=service.currentForMember(user.getTelegramId());
+        String text="⚡💧 ĐIỆN NƯỚC KỲ HIỆN TẠI\n\n";
+        if(current.isEmpty()) text+="Chưa có kỳ điện nước được phép xem.";
+        else {
+            var c=current.get();
+            text+="🏠 Phòng: "+c.roomNumber()+"\nKỳ: "+date(c.start())+" – "+date(c.end())
+                    +"\n\n⚡ Điện\nChỉ số đầu kỳ: "+number(c.electricityStart())+" kWh"
+                    +"\nChỉ số cuối kỳ: "+(c.electricityEnd()==null?"Chưa chốt":number(c.electricityEnd())+" kWh")
+                    +"\n\n💧 Nước\nChỉ số đầu kỳ: "+number(c.waterStart())+" m³"
+                    +"\nChỉ số cuối kỳ: "+(c.waterEnd()==null?"Chưa chốt":number(c.waterEnd())+" m³")
+                    +"\n\nTình trạng: "+(c.finalized()?"Đã chốt kỳ":"Chưa chốt kỳ, chưa phát sinh tiền điện nước.");
+        }
+        sender.sendMessageWithKeyboard(chat,text,new InlineKeyboardMarkup(List.of(row("⬅️ Menu chính","MAIN_MENU"))));
+    }
     private void list(Long chat,User user,String filter,UserConversationState state,BotMessageSender sender) {
         states.clearState(user.getTelegramId());
         var cycles=service.list(user.getTelegramId()); var rows=new ArrayList<InlineKeyboardRow>();
@@ -210,11 +227,12 @@ public class UtilityCycleFlow {
         StringBuilder text=new StringBuilder("📋 DANH SÁCH KỲ ĐIỆN NƯỚC\n\n");
         int periodIndex=0;
         for(var c:cycles) {
-            if(c.isBaseline()) continue;
-            if(c.getContract().getStatus()!=com.boardinghousebot.domain.contract.ContractStatus.ACTIVE) continue;
+            if(owner && c.isBaseline()) continue;
+            if(owner && c.getContract().getStatus()!=com.boardinghousebot.domain.contract.ContractStatus.ACTIVE) continue;
             if(roomId!=null && !roomId.equals(c.getContract().getRoom().getId())) continue;
             String label=periodIndex==0?"Kỳ này":periodIndex==1?"Kỳ trước":"Kỳ cũ";
-            String name=(owner?label:"Phòng "+c.getContract().getRoom().getRoomNumber())+" · "+c.periodLabel();
+            String name=(owner?label:"Phòng "+c.getContract().getRoom().getRoomNumber())+" · "
+                    +(c.isBaseline()?"Chỉ số ban đầu · "+date(c.getPeriodStart()):c.periodLabel());
             rows.add(row(name,(owner?"METER_CYCLE_VIEW_":"MEMBER_CYCLE_DETAIL_")+c.getId()));
             periodIndex++;
         }
@@ -231,7 +249,8 @@ public class UtilityCycleFlow {
             if(c.getElectricity()!=null || c.getWater()!=null) text+=
                     "\n\nChỉ số điện ban đầu: "+number(c.getElectricity())+" kWh"
                     +"\nChỉ số nước ban đầu: "+number(c.getWater())+" m³"
-                    +"\nTình trạng: "+status(c);
+                    +"\nTình trạng: "+(!owner && c.isFinalized()?"Đã xác nhận chỉ số ban đầu":status(c));
+            if(!owner) text+="\n\nMốc ban đầu chưa có chỉ số cuối kỳ, chưa phát sinh tiền điện nước.";
         } else text+="\n\n⚡ Điện"
                 +"\nChỉ số đầu kỳ: "+number(c.getPreviousElectricity())+" kWh"
                 +"\nChỉ số cuối kỳ: "+(c.getElectricity()==null?"Chưa nhập":number(c.getElectricity())+" kWh")

@@ -67,7 +67,7 @@ mvn test
 ```
 
 Kiểm thử dùng SQLite trong bộ nhớ và tắt kết nối bot Telegram; không dùng database thật hoặc token trong `.env`.
-Lượt xác minh ngày 21/10/2026 với Java 17, chạy `mvn clean test`: **669 kiểm thử, 0 lỗi, 0 thất bại, 0 bỏ qua**.
+Lượt xác minh ngày 21/10/2026 với Java 17, chạy `mvn compile test-compile test`: **662 kiểm thử, 0 lỗi, 0 thất bại, 0 bỏ qua**.
 
 ## Dữ liệu và dọn dẹp
 

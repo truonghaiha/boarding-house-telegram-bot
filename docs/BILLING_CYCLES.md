@@ -29,6 +29,7 @@
 ## Số ban đầu và chuyển đổi dữ liệu cũ
 
 - Mốc ban đầu cố định tại ngày bắt đầu hợp đồng, kể cả khi nhập muộn. Không có chức năng sửa ngày bàn giao. Sau khi xác nhận, bot mở kỳ đầu đến ngày tương ứng tháng sau, giới hạn bởi ngày kết thúc hợp đồng; số ban đầu được dùng làm chỉ số đầu kỳ.
+- Người thuê bấm **Điện nước** sẽ thấy ngay kỳ hiện tại của phòng đang thuê, không chọn danh sách hay mục chỉ số ban đầu. Màn hình chỉ có nút Menu chính, hiển thị khoảng kỳ và chỉ số đầu/cuối của điện, nước. Khi mới lưu số ban đầu, dùng số này làm số đầu kỳ đầu tiên; số cuối kỳ ghi **Chưa chốt**, chưa phát sinh tiền điện nước. Khi kỳ đang nhập dở, chỉ hiện số đầu đã xác nhận và lịch kỳ; số cuối nháp và lựa chọn chốt của chủ trọ được ẩn. Sau khi chốt, hiện đủ số đầu và cuối kỳ. Lấy kỳ mới nhất đã mở của hợp đồng hiện tại, hoặc kỳ đầu tính từ mốc ban đầu đã xác nhận nếu chưa mở; không tự tạo kỳ khi xem. Mọi lần xem vẫn kiểm tra phòng hiện tại và quyền theo lịch sử cư trú; quyền truy cập bản ghi lịch sử được giữ nguyên.
 - Dữ liệu tháng cũ vẫn được xem ở **Dữ liệu tháng cũ**. Không tự chuyển số cũ thành kỳ ngày cụ thể hoặc sửa hóa đơn/thanh toán cũ.
 - Nếu phát hiện hóa đơn tháng cũ cùng hợp đồng và kỳ thanh toán, bot chặn lập thêm để chủ trọ kiểm tra, tránh thu trùng.
 - Cấu trúc mới cho phép nhiều kỳ rõ ngày của các đợt thuê khác nhau trong cùng tháng, nhưng mỗi kỳ chỉ được phát hành một hóa đơn. Quy tắc không trùng phòng/tháng của hóa đơn cũ vẫn được giữ riêng.
